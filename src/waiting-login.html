@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patrins — Signing In</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0E0F14;
+    color: #e8e6e1;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 20px;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+  .logo {
+    width: 52px;
+    height: 52px;
+    opacity: 0.9;
+  }
+  .spinner {
+    width: 28px;
+    height: 28px;
+    border: 2.5px solid #1e2030;
+    border-top-color: #2E36B8;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  h1 {
+    font-size: 17px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: #e8e6e1;
+  }
+  p {
+    font-size: 13px;
+    color: #5a5856;
+    text-align: center;
+    max-width: 260px;
+    line-height: 1.6;
+  }
+  .browser-badge {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 14px;
+    background: #1a1a18;
+    border: 1px solid #2a2a27;
+    border-radius: 8px;
+    font-size: 12px;
+    color: #8a8880;
+    margin-top: 4px;
+  }
+  .dot {
+    width: 7px; height: 7px;
+    background: #2E36B8;
+    border-radius: 50%;
+    animation: pulse 1.5s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.3; }
+  }
+</style>
+</head>
+<body>
+  <svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+    <defs>
+      <linearGradient id="t" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#8EA5FF"/><stop offset="1" stop-color="#4F5BFF"/>
+      </linearGradient>
+      <linearGradient id="m" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#4F5BFF"/><stop offset="1" stop-color="#3741D6"/>
+      </linearGradient>
+      <linearGradient id="b" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#3741D6"/><stop offset="1" stop-color="#2E36B8"/>
+      </linearGradient>
+    </defs>
+    <rect x="14" y="56" width="86" height="56" rx="12" fill="url(#b)"/>
+    <rect x="14.5" y="56.5" width="85" height="55" rx="11.5" fill="none" stroke="#fff" stroke-opacity="0.18"/>
+    <rect x="22" y="40" width="86" height="56" rx="12" fill="url(#m)"/>
+    <rect x="22.5" y="40.5" width="85" height="55" rx="11.5" fill="none" stroke="#fff" stroke-opacity="0.22"/>
+    <rect x="30" y="24" width="86" height="56" rx="12" fill="url(#t)"/>
+    <rect x="30.5" y="24.5" width="85" height="55" rx="11.5" fill="none" stroke="#fff" stroke-opacity="0.35"/>
+    <path d="M30 36 Q73 28 116 36" stroke="#fff" stroke-opacity="0.25" stroke-width="1.5" fill="none"/>
+  </svg>
+  <div class="spinner"></div>
+  <h1>Completing sign-in</h1>
+  <p>Finish signing in with Google in your browser, then come back here.</p>
+  <div class="browser-badge">
+    <div class="dot"></div>
+    Waiting for your browser…
+  </div>
+</body>
+</html>

@@ -1,0 +1,23 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="128" height="128" viewBox="0 0 128 128" fill="none">
+  <defs>
+    <linearGradient id="ml-top" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#8EA5FF"/>
+      <stop offset="1" stop-color="#4F5BFF"/>
+    </linearGradient>
+    <linearGradient id="ml-mid" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#4F5BFF"/>
+      <stop offset="1" stop-color="#3741D6"/>
+    </linearGradient>
+    <linearGradient id="ml-bot" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#3741D6"/>
+      <stop offset="1" stop-color="#2E36B8"/>
+    </linearGradient>
+  </defs>
+  <rect x="14" y="56" width="86" height="56" rx="12" fill="url(#ml-bot)"/>
+  <rect x="14.5" y="56.5" width="85" height="55" rx="11.5" fill="none" stroke="#fff" stroke-opacity="0.18"/>
+  <rect x="22" y="40" width="86" height="56" rx="12" fill="url(#ml-mid)"/>
+  <rect x="22.5" y="40.5" width="85" height="55" rx="11.5" fill="none" stroke="#fff" stroke-opacity="0.22"/>
+  <rect x="30" y="24" width="86" height="56" rx="12" fill="url(#ml-top)"/>
+  <rect x="30.5" y="24.5" width="85" height="55" rx="11.5" fill="none" stroke="#fff" stroke-opacity="0.35"/>
+  <path d="M30 36 Q73 28 116 36" stroke="#fff" stroke-opacity="0.25" stroke-width="1.5" fill="none"/>
+</svg>

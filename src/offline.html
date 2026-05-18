@@ -1,0 +1,81 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Patrins — No Connection</title>
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  body {
+    background: #0E0F14;
+    color: #e8e6e1;
+    font-family: 'Segoe UI', system-ui, sans-serif;
+    height: 100vh;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 24px;
+    -webkit-font-smoothing: antialiased;
+    user-select: none;
+  }
+  .logo {
+    width: 64px;
+    height: 64px;
+    opacity: 0.9;
+  }
+  h1 {
+    font-size: 20px;
+    font-weight: 600;
+    letter-spacing: -0.02em;
+    color: #e8e6e1;
+  }
+  p {
+    font-size: 14px;
+    color: #5a5856;
+    text-align: center;
+    max-width: 280px;
+    line-height: 1.6;
+  }
+  button {
+    margin-top: 8px;
+    padding: 10px 28px;
+    background: #2E36B8;
+    color: #fff;
+    border: none;
+    border-radius: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.15s;
+  }
+  button:hover { background: #3741D6; }
+  button:active { background: #2530a0; }
+</style>
+</head>
+<body>
+  <svg class="logo" xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" fill="none">
+    <defs>
+      <linearGradient id="t" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#8EA5FF"/><stop offset="1" stop-color="#4F5BFF"/>
+      </linearGradient>
+      <linearGradient id="m" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#4F5BFF"/><stop offset="1" stop-color="#3741D6"/>
+      </linearGradient>
+      <linearGradient id="b" x1="0" y1="0" x2="0" y2="1">
+        <stop offset="0" stop-color="#3741D6"/><stop offset="1" stop-color="#2E36B8"/>
+      </linearGradient>
+    </defs>
+    <rect x="14" y="56" width="86" height="56" rx="12" fill="url(#b)"/>
+    <rect x="14.5" y="56.5" width="85" height="55" rx="11.5" fill="none" stroke="#fff" stroke-opacity="0.18"/>
+    <rect x="22" y="40" width="86" height="56" rx="12" fill="url(#m)"/>
+    <rect x="22.5" y="40.5" width="85" height="55" rx="11.5" fill="none" stroke="#fff" stroke-opacity="0.22"/>
+    <rect x="30" y="24" width="86" height="56" rx="12" fill="url(#t)"/>
+    <rect x="30.5" y="24.5" width="85" height="55" rx="11.5" fill="none" stroke="#fff" stroke-opacity="0.35"/>
+    <path d="M30 36 Q73 28 116 36" stroke="#fff" stroke-opacity="0.25" stroke-width="1.5" fill="none"/>
+  </svg>
+  <h1>No connection</h1>
+  <p>Can't reach Patrins. Check your internet connection and try again.</p>
+  <button onclick="window.patrinsApp?.retryConnection()">Try Again</button>
+</body>
+</html>

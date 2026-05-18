@@ -1,0 +1,32 @@
+{
+  "name": "patrins",
+  "productName": "Patrins",
+  "version": "1.0.17",
+  "description": "Patrins — Private File Hosting",
+  "author": "Patrins <support@patrins.com>",
+  "license": "MIT",
+  "homepage": "https://patrins.com",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/patrinscom/patrins-desktop.git"
+  },
+  "main": "src/main.js",
+  "scripts": {
+    "start": "electron .",
+    "icons": "node scripts/generate-icons.js",
+    "build:win": "electron-builder --win --x64"
+  },
+  "dependencies": {
+    "chokidar": "^5.0.0",
+    "electron-store": "^8.2.0",
+    "electron-updater": "^6.3.9"
+  },
+  "devDependencies": {
+    "electron": "^29.4.6",
+    "electron-builder": "^24.13.3"
+  },
+  "optionalDependencies": {
+    "sharp": "^0.33.5",
+    "to-ico": "^1.1.5"
+  }
+}
