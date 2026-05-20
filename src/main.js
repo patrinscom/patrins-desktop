@@ -443,6 +443,14 @@ function createWindow() {
   });
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
+    // Marketing/download pages should open in the system browser, not inside the app
+    const externalPaths = ['/download', '/pricing', '/updates/'];
+    if (externalPaths.some(p => url.includes('patrins.com' + p))) {
+      event.preventDefault();
+      shell.openExternal(url);
+      return;
+    }
+
     // Analytics breaks inside the app — open in system browser
     if (url.includes('patrins.com/analytics')) {
       event.preventDefault();
