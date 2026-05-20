@@ -2,7 +2,6 @@ const { contextBridge, ipcRenderer } = require('electron');
 
 contextBridge.exposeInMainWorld('patrinsApp', {
   retryConnection: () => ipcRenderer.send('retry-connection'),
-  version: process.env.npm_package_version || '1.0.0',
 
   // OS-level download engine
   startDesktopDownload: (opts) => ipcRenderer.invoke('patrins-download', opts),
@@ -48,4 +47,14 @@ contextBridge.exposeInMainWorld('patrinsApp', {
   installUpdate: () => ipcRenderer.send('update:install'),
   checkForUpdates: () => ipcRenderer.invoke('update:check'),
   appVersion: () => ipcRenderer.invoke('app:version'),
+
+  // Find in page
+  findInPage:    (text, opts) => ipcRenderer.send('find-in-page', text, opts || {}),
+  stopFindInPage: ()          => ipcRenderer.send('stop-find-in-page'),
+  onFindResult: (cb) => {
+    const h = (_e, data) => cb(data);
+    ipcRenderer.on('find-result', h);
+    return h;
+  },
+  offFindResult: (h) => ipcRenderer.removeListener('find-result', h),
 });

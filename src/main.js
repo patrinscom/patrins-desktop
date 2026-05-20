@@ -1,11 +1,11 @@
-const { app, BrowserWindow, shell, ipcMain, dialog, Menu, clipboard, net, Notification } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog, Menu, clipboard, net, Notification, screen, powerMonitor } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const Store = require('electron-store');
 const path = require('path');
 const fs = require('fs');
 const os = require('os');
 const { exec } = require('child_process');
-const { createTray } = require('./tray');
+const { createTray, updateTrayMenu } = require('./tray');
 const SyncEngine = require('./sync');
 
 // ── Lightweight profile ───────────────────────────────────────────────────────
@@ -26,11 +26,9 @@ const sync = new SyncEngine(store, () => mainWindow?.webContents?.session);
 
 sync.on('status', (data) => {
   mainWindow?.webContents?.send('sync:status', data);
-  // Update tray tooltip on status changes
-  if (tray) {
-    const labels = { 'up-to-date': 'Patrins — Synced', syncing: 'Patrins — Syncing…', paused: 'Patrins — Sync paused', error: 'Patrins — Sync error', stopped: 'Patrins' };
-    try { tray.setToolTip(labels[data.state] || 'Patrins'); } catch (_) {}
-  }
+  const labels = { 'up-to-date': 'Patrins — Synced', syncing: 'Patrins — Syncing…', paused: 'Patrins — Sync paused', error: 'Patrins — Sync error', stopped: 'Patrins' };
+  if (tray) try { tray.setToolTip(labels[data.state] || 'Patrins'); } catch (_) {}
+  updateTrayMenu(data.state, undefined);
 });
 
 // Single instance lock
@@ -231,6 +229,7 @@ async function mountDavDrive() {
         davDriveLetter = letter;
         davLog(`Mounted at ${letter}:`);
         notify('Patrins Drive connected', `Your files are at ${letter}: in File Explorer`);
+        updateTrayMenu(undefined, letter);
         // HKCU registry fixes — no UAC required
         runCmd([
           // Enable Explorer thumbnails for network drives
@@ -256,6 +255,7 @@ async function unmountDavDrive() {
   if (!davDriveLetter) return;
   await runCmd(`net use ${davDriveLetter}: /delete /y`).catch(() => {});
   davDriveLetter = null;
+  updateTrayMenu(undefined, null);
 }
 
 function registerWindowShortcuts(win) {
@@ -289,12 +289,87 @@ function registerWindowShortcuts(win) {
     if (noModifiers && key === 'escape') {
       event.preventDefault();
       if (win.webContents.canGoBack()) win.webContents.goBack();
+      return;
+    }
+
+    // F11 — fullscreen toggle
+    if (noModifiers && (key === 'f11' || code === 'F11')) {
+      event.preventDefault();
+      win.setFullScreen(!win.isFullScreen());
+      return;
+    }
+
+    // Zoom in / out / reset
+    if (onlyCtrl && (key === '=' || key === '+' || code === 'Equal')) {
+      event.preventDefault();
+      win.webContents.setZoomFactor(Math.min(win.webContents.getZoomFactor() + 0.1, 3.0));
+      return;
+    }
+    if (onlyCtrl && (key === '-' || code === 'Minus')) {
+      event.preventDefault();
+      win.webContents.setZoomFactor(Math.max(win.webContents.getZoomFactor() - 0.1, 0.3));
+      return;
+    }
+    if (onlyCtrl && (key === '0' || code === 'Digit0')) {
+      event.preventDefault();
+      win.webContents.setZoomFactor(1.0);
+      return;
+    }
+
+    // Ctrl+F — find in page overlay
+    if (onlyCtrl && key === 'f') {
+      event.preventDefault();
+      win.webContents.executeJavaScript(`
+        (function() {
+          const existing = document.getElementById('__pfind');
+          if (existing) { existing.querySelector('input').select(); return; }
+          const wrap = document.createElement('div');
+          wrap.id = '__pfind';
+          wrap.style.cssText = 'position:fixed;top:0;right:0;z-index:2147483647;background:#1a1a18;border:1px solid #2a2a27;border-top:none;border-right:none;border-radius:0 0 0 6px;padding:6px 10px;display:flex;align-items:center;gap:6px;box-shadow:0 4px 16px rgba(0,0,0,.5);';
+          wrap.innerHTML = '<input id="__pfind-input" placeholder="Find in page…" style="background:#111110;color:#e8e6e1;border:1px solid #2a2a27;border-radius:4px;padding:3px 8px;font-size:13px;font-family:inherit;outline:none;width:190px;" />'
+            + '<span id="__pfind-count" style="color:#8a8880;font-size:12px;min-width:52px;text-align:center;"></span>'
+            + '<button title="Previous (Shift+Enter)" style="background:none;border:none;color:#8a8880;cursor:pointer;font-size:15px;padding:0 2px;line-height:1;">‹</button>'
+            + '<button title="Next (Enter)" style="background:none;border:none;color:#8a8880;cursor:pointer;font-size:15px;padding:0 2px;line-height:1;">›</button>'
+            + '<button title="Close (Escape)" style="background:none;border:none;color:#8a8880;cursor:pointer;font-size:17px;padding:0 2px;line-height:1;">×</button>';
+          document.body.appendChild(wrap);
+          const inp = wrap.querySelector('input');
+          const [btnPrev, btnNext, btnClose] = wrap.querySelectorAll('button');
+          inp.focus();
+          inp.addEventListener('input', () => {
+            if (inp.value) window.patrinsApp.findInPage(inp.value, {});
+            else window.patrinsApp.stopFindInPage();
+          });
+          inp.addEventListener('keydown', e => {
+            if (e.key === 'Enter') { e.preventDefault(); window.patrinsApp.findInPage(inp.value, { forward: !e.shiftKey, findNext: true }); }
+            if (e.key === 'Escape') { e.preventDefault(); btnClose.click(); }
+          });
+          btnPrev.onclick = () => window.patrinsApp.findInPage(inp.value, { forward: false, findNext: true });
+          btnNext.onclick = () => window.patrinsApp.findInPage(inp.value, { forward: true,  findNext: true });
+          btnClose.onclick = () => { window.patrinsApp.stopFindInPage(); wrap.remove(); };
+          window.patrinsApp.onFindResult(r => {
+            const el = document.getElementById('__pfind-count');
+            if (el) el.textContent = r && r.matches ? r.activeMatchOrdinal + '/' + r.matches : (r && r.finalUpdate && !r.matches ? 'No results' : '');
+          });
+        })();
+      `).catch(() => {});
+      return;
     }
   });
 }
 
+function isOnScreen(bounds) {
+  return screen.getAllDisplays().some(d => {
+    const b = d.bounds;
+    return bounds.x < b.x + b.width  && bounds.x + (bounds.width  || 0) > b.x &&
+           bounds.y < b.y + b.height && bounds.y + (bounds.height || 0) > b.y;
+  });
+}
+
 function createWindow() {
-  const bounds = store.get('windowBounds', { width: 1280, height: 820 });
+  const saved  = store.get('windowBounds', {});
+  const bounds = (saved.x !== undefined && saved.y !== undefined && isOnScreen(saved))
+    ? saved
+    : { width: 1280, height: 820 };
 
   mainWindow = new BrowserWindow({
     width: bounds.width,
@@ -388,6 +463,11 @@ function createWindow() {
   if (Date.now() - store.get('lastCacheClear', 0) > WEEK) {
     mainWindow.webContents.session.clearCache().then(() => store.set('lastCacheClear', Date.now())).catch(() => {});
   }
+
+  // Relay find-in-page results to the renderer's find overlay
+  mainWindow.webContents.on('found-in-page', (_, result) => {
+    mainWindow.webContents.send('find-result', result);
+  });
 
   // Taskbar loading indicator
   mainWindow.webContents.on('did-start-loading', () => mainWindow.setProgressBar(2));
@@ -498,6 +578,15 @@ app.whenReady().then(() => {
   tray = createTray(mainWindow);
   setupAutoUpdater();
 
+  // Re-mount WebDAV drive after PC wakes from sleep
+  powerMonitor.on('resume', () => {
+    if (!davDriveLetter) mountDavDrive();
+  });
+
+  // Tray pause/resume clicks relay to sync
+  app.on('sync:pause-from-tray',  () => sync.pause());
+  app.on('sync:resume-from-tray', () => sync.resume());
+
   // Handle deep link if app was launched via patrins:// URL
   const deepLinkArg = process.argv.find(arg => arg.startsWith('patrins://'));
   if (deepLinkArg) handleDeepLink(deepLinkArg);
@@ -518,6 +607,13 @@ app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(
 
 ipcMain.on('retry-connection', () => mainWindow?.loadURL(DASHBOARD_URL));
 ipcMain.on('show-in-folder', (event, filePath) => shell.showItemInFolder(filePath));
+
+ipcMain.on('find-in-page', (_, text, opts) => {
+  if (text) mainWindow?.webContents.findInPage(text, opts);
+});
+ipcMain.on('stop-find-in-page', () => {
+  mainWindow?.webContents.stopFindInPage('clearSelection');
+});
 
 // ── Sync IPC ──────────────────────────────────────────────────────────────────
 ipcMain.handle('sync:get-status', () => ({
