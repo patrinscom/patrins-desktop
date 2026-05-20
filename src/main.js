@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain, dialog, Menu, clipboard, globalShortcut, net, Notification } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog, Menu, clipboard, net, Notification } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const Store = require('electron-store');
 const path = require('path');
@@ -258,6 +258,41 @@ async function unmountDavDrive() {
   davDriveLetter = null;
 }
 
+function registerWindowShortcuts(win) {
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown') return;
+
+    const key = String(input.key || '').toLowerCase();
+    const code = String(input.code || '');
+    const noModifiers = !input.control && !input.alt && !input.meta && !input.shift;
+    const onlyCtrl = input.control && !input.alt && !input.meta && !input.shift;
+    const onlyAlt = input.alt && !input.control && !input.meta && !input.shift;
+
+    if (onlyAlt && (key === 'arrowleft' || key === 'left' || code === 'ArrowLeft')) {
+      event.preventDefault();
+      if (win.webContents.canGoBack()) win.webContents.goBack();
+      return;
+    }
+
+    if (onlyAlt && (key === 'arrowright' || key === 'right' || code === 'ArrowRight')) {
+      event.preventDefault();
+      if (win.webContents.canGoForward()) win.webContents.goForward();
+      return;
+    }
+
+    if ((noModifiers && (key === 'f5' || code === 'F5')) || (onlyCtrl && key === 'r')) {
+      event.preventDefault();
+      win.webContents.reload();
+      return;
+    }
+
+    if (noModifiers && key === 'escape') {
+      event.preventDefault();
+      if (win.webContents.canGoBack()) win.webContents.goBack();
+    }
+  });
+}
+
 function createWindow() {
   const bounds = store.get('windowBounds', { width: 1280, height: 820 });
 
@@ -281,6 +316,8 @@ function createWindow() {
       v8CacheOptions: 'bypassHeatCheck',
     },
   });
+
+  registerWindowShortcuts(mainWindow);
 
   // Intercept at network layer (catches 302 redirects, not just link clicks)
   mainWindow.webContents.session.webRequest.onBeforeRequest(
@@ -461,19 +498,10 @@ app.whenReady().then(() => {
   tray = createTray(mainWindow);
   setupAutoUpdater();
 
-  // Navigation shortcuts
-  globalShortcut.register('Alt+Left',  () => { if (mainWindow?.webContents.canGoBack())    mainWindow.webContents.goBack(); });
-  globalShortcut.register('Alt+Right', () => { if (mainWindow?.webContents.canGoForward()) mainWindow.webContents.goForward(); });
-  globalShortcut.register('F5',        () => mainWindow?.webContents.reload());
-  globalShortcut.register('Ctrl+R',    () => mainWindow?.webContents.reload());
-  globalShortcut.register('Escape',    () => { if (mainWindow?.webContents.canGoBack()) mainWindow.webContents.goBack(); });
-
   // Handle deep link if app was launched via patrins:// URL
   const deepLinkArg = process.argv.find(arg => arg.startsWith('patrins://'));
   if (deepLinkArg) handleDeepLink(deepLinkArg);
 });
-
-app.on('will-quit', () => globalShortcut.unregisterAll());
 
 app.on('before-quit', (event) => {
   if (davDriveLetter) {
