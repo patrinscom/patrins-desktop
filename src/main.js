@@ -545,30 +545,47 @@ function createWindow() {
 }
 
 function setupAutoUpdater() {
+  // Auto-updater only works in packaged builds — skip in dev to avoid spurious errors
+  if (!app.isPackaged) return;
+
   autoUpdater.autoDownload = true;
   autoUpdater.autoInstallOnAppQuit = true;
+  autoUpdater.logger = null; // suppress verbose internal logs; we handle events ourselves
   autoUpdater.setFeedURL({ provider: 'generic', url: UPDATE_URL });
 
-  autoUpdater.on('error', () => {});
+  autoUpdater.on('error', (err) => {
+    console.error('[updater] error:', err?.message || err);
+  });
+  autoUpdater.on('checking-for-update', () => {
+    console.log('[updater] checking for update…');
+  });
   autoUpdater.on('update-available', (info) => {
+    console.log('[updater] update available:', info.version);
     mainWindow?.webContents?.send('update:available', { version: info.version });
+  });
+  autoUpdater.on('update-not-available', (info) => {
+    console.log('[updater] up to date:', info.version);
   });
   autoUpdater.on('download-progress', (p) => {
     mainWindow?.webContents?.send('update:progress', {
-      percent:       Math.round(p.percent),
-      transferred:   p.transferred,
-      total:         p.total,
+      percent:        Math.round(p.percent),
+      transferred:    p.transferred,
+      total:          p.total,
       bytesPerSecond: p.bytesPerSecond,
     });
   });
   autoUpdater.on('update-downloaded', (info) => {
+    console.log('[updater] update downloaded:', info.version);
     mainWindow?.webContents?.send('update:downloaded', { version: info.version });
   });
 
-  autoUpdater.checkForUpdates().catch(() => {});
+  autoUpdater.checkForUpdates().catch((err) => console.error('[updater] check failed:', err?.message));
 
   // Re-check every 4 hours
-  setInterval(() => autoUpdater.checkForUpdates().catch(() => {}), 4 * 60 * 60 * 1000);
+  setInterval(
+    () => autoUpdater.checkForUpdates().catch((err) => console.error('[updater] check failed:', err?.message)),
+    4 * 60 * 60 * 1000
+  );
 }
 
 app.whenReady().then(() => {
