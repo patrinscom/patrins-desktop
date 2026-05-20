@@ -1,5 +1,6 @@
 const { Tray, Menu, app, shell, nativeImage } = require('electron');
 const path = require('path');
+const logger = require('./logger');
 
 let tray = null;
 let _mainWindow = null;
@@ -47,6 +48,12 @@ function buildMenu() {
 
   items.push(
     { type: 'separator' },
+    {
+      label:   'Send Diagnostics',
+      type:    'checkbox',
+      checked: logger.isEnabled(),
+      click:   (item) => logger.setEnabled(item.checked),
+    },
     { label: 'Quit', click: () => { app.isQuitting = true; app.quit(); } }
   );
 

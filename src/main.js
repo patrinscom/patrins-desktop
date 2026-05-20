@@ -7,6 +7,7 @@ const os = require('os');
 const { exec } = require('child_process');
 const { createTray, updateTrayMenu } = require('./tray');
 const SyncEngine = require('./sync');
+const logger = require('./logger');
 
 // ── Lightweight profile ───────────────────────────────────────────────────────
 app.commandLine.appendSwitch('disk-cache-size', String(50 * 1024 * 1024)); // 50 MB disk cache cap
@@ -205,6 +206,7 @@ async function mountDavDrive() {
     davLog(`Got DAV token for ${info?.email}`);
   } catch (err) {
     davLog(`fetchDavToken failed: ${err.message}`);
+    logger.log('dav_token_error', { error: err.message });
     return;
   }
   if (!info?.token || !info?.email) { davLog('No token/email in response'); return; }
@@ -215,6 +217,7 @@ async function mountDavDrive() {
   const running = await ensureWebClient();
   if (!running) {
     davLog('WebClient not running, aborting mount');
+    logger.log('dav_service_error', {});
     notify('Patrins Drive', 'Could not start WebDAV service. Drive not mounted.');
     return;
   }
@@ -228,6 +231,7 @@ async function mountDavDrive() {
         await runCmd(cmd);
         davDriveLetter = letter;
         davLog(`Mounted at ${letter}:`);
+        logger.log('dav_mounted', { letter });
         notify('Patrins Drive connected', `Your files are at ${letter}: in File Explorer`);
         updateTrayMenu(undefined, letter);
         // HKCU registry fixes — no UAC required
@@ -242,9 +246,11 @@ async function mountDavDrive() {
         return;
       } catch (err) {
         davLog(`${letter}: failed — ${err.message.split('\n')[0]}`);
+        logger.log('dav_letter_fail', { letter, error: err.message.split('\n')[0] });
       }
     }
     davLog('All letters failed');
+    logger.log('dav_all_failed', {});
     notify('Patrins Drive', 'Could not mount — check %APPDATA%\\Patrins\\dav-mount.log');
   } finally {
     davMounting = false;
@@ -510,9 +516,20 @@ function createWindow() {
   });
 
   // Offline / connection failed
-  mainWindow.webContents.on('did-fail-load', (event, errorCode) => {
+  mainWindow.webContents.on('did-fail-load', (event, errorCode, _desc, validatedURL, isMainFrame) => {
     if (errorCode === -3) return; // aborted navigation, ignore
+    if (isMainFrame) {
+      logger.log('page_load_fail', {
+        code:   errorCode,
+        target: validatedURL?.includes('patrins.com') ? 'app' : 'ext',
+      });
+    }
     mainWindow.loadFile(path.join(__dirname, 'offline.html'));
+  });
+
+  // Renderer process gone (crash, OOM, killed)
+  mainWindow.webContents.on('render-process-gone', (_event, details) => {
+    logger.log('renderer_gone', { reason: details?.reason || 'unknown' });
   });
 
   // Right-click context menu
@@ -565,6 +582,7 @@ function setupAutoUpdater() {
 
   autoUpdater.on('error', (err) => {
     console.error('[updater] error:', err?.message || err);
+    logger.log('updater_error', { error: err?.message });
   });
   autoUpdater.on('checking-for-update', () => {
     console.log('[updater] checking for update…');
@@ -598,9 +616,23 @@ function setupAutoUpdater() {
   );
 }
 
+// ── Process-level crash/rejection capture ─────────────────────────────────────
+process.on('uncaughtException', (err) => {
+  console.error('[main] uncaughtException:', err?.message);
+  logger.log('main_crash', { error: err?.message });
+  logger.flush().finally(() => process.exit(1));
+});
+process.on('unhandledRejection', (reason) => {
+  const msg = reason instanceof Error ? reason.message : String(reason);
+  console.error('[main] unhandledRejection:', msg);
+  logger.log('unhandled_rejection', { error: msg });
+});
+
 app.whenReady().then(() => {
   app.setAppUserModelId('com.patrins.desktop'); // required for Windows toast notifications
   app.setAsDefaultProtocolClient('patrins');
+
+  logger.init(store, app.getVersion());
 
   // Register in Windows startup — launches hidden to tray on login
   if (app.isPackaged) {
@@ -628,12 +660,13 @@ app.whenReady().then(() => {
 app.on('before-quit', (event) => {
   if (davDriveLetter) {
     event.preventDefault();
-    unmountDavDrive().finally(() => {
-      app.isQuitting = true;
-      app.quit();
-    });
+    logger.shutdown()
+      .catch(() => {})
+      .finally(() => unmountDavDrive())
+      .finally(() => { app.isQuitting = true; app.quit(); });
   } else {
     app.isQuitting = true;
+    logger.shutdown().catch(() => {});
   }
 });
 app.on('window-all-closed', () => { if (process.platform !== 'darwin') app.quit(); });
@@ -822,6 +855,7 @@ ipcMain.handle('patrins-download', async (event, { downloadId, fileId, fileName,
 
   } catch (err) {
     cleanup();
+    logger.log('download_error', { error: err.message, size: logger.sizeRange(fileSize) });
     event.sender.send('download-progress', { downloadId, phase: 'error', error: err.message });
     return { status: 'error', error: err.message };
   }

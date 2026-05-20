@@ -4,6 +4,7 @@ const path    = require('path');
 const { app } = require('electron');
 const { EventEmitter } = require('events');
 const tus     = require('tus-js-client');
+const logger  = require('./logger');
 
 const API_HOST       = 'patrins.com';
 const API_BASE       = 'https://' + API_HOST;
@@ -103,7 +104,10 @@ class SyncEngine extends EventEmitter {
           const id = res.getHeader('X-File-Id');
           if (id) resolvedFileId = id;
         },
-        onError:   (err) => reject(err),
+        onError: (err) => {
+          logger.log('tus_upload_error', { error: err?.message, size: logger.sizeRange(fileSize) });
+          reject(err);
+        },
         onSuccess: () => resolve(resolvedFileId),
       });
 
@@ -161,6 +165,7 @@ class SyncEngine extends EventEmitter {
       await this._ensureRootFolder();
     } catch (e) {
       this._status('error', { error: 'Cannot reach Patrins: ' + e.message });
+      logger.log('sync_connect_error', { error: e.message });
       return;
     }
 
@@ -241,6 +246,11 @@ class SyncEngine extends EventEmitter {
       } catch (e) {
         console.error('[Sync] Failed:', rel, e.message);
         errors.push({ rel, error: e.message });
+        logger.log('sync_upload_error', {
+          error: e.message,
+          ext:   (path.extname(rel) || '').toLowerCase().slice(1, 10) || 'none',
+          op:    op.type,
+        });
       }
     }
 
