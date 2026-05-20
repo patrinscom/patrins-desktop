@@ -366,10 +366,11 @@ function isOnScreen(bounds) {
 }
 
 function createWindow() {
-  const saved  = store.get('windowBounds', {});
-  const bounds = (saved.x !== undefined && saved.y !== undefined && isOnScreen(saved))
+  const saved      = store.get('windowBounds', {});
+  const bounds     = (saved.x !== undefined && saved.y !== undefined && isOnScreen(saved))
     ? saved
     : { width: 1280, height: 820 };
+  const startHidden = process.argv.includes('--hidden');
 
   mainWindow = new BrowserWindow({
     width: bounds.width,
@@ -382,6 +383,7 @@ function createWindow() {
     icon: path.join(__dirname, '../assets/icon.ico'),
     autoHideMenuBar: true,
     title: 'Patrins',
+    show: !startHidden,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       nodeIntegration: false,
@@ -591,6 +593,12 @@ function setupAutoUpdater() {
 app.whenReady().then(() => {
   app.setAppUserModelId('com.patrins.desktop'); // required for Windows toast notifications
   app.setAsDefaultProtocolClient('patrins');
+
+  // Register in Windows startup — launches hidden to tray on login
+  if (app.isPackaged) {
+    app.setLoginItemSettings({ openAtLogin: true, args: ['--hidden'] });
+  }
+
   createWindow();
   tray = createTray(mainWindow);
   setupAutoUpdater();
