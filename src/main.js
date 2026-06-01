@@ -449,6 +449,17 @@ function createWindow() {
   });
 
   mainWindow.webContents.on('will-navigate', (event, url) => {
+    // Homepage has no use inside the app — always send to login instead
+    try {
+      const u = new URL(url);
+      if ((u.hostname === 'patrins.com' || u.hostname === 'www.patrins.com') &&
+          (u.pathname === '/' || u.pathname === '')) {
+        event.preventDefault();
+        mainWindow.loadURL('https://patrins.com/login');
+        return;
+      }
+    } catch (_) {}
+
     // Marketing/download pages should open in the system browser, not inside the app
     const externalPaths = ['/download', '/pricing', '/updates/'];
     if (externalPaths.some(p => url.includes('patrins.com' + p))) {
