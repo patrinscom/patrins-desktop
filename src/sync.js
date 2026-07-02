@@ -9,19 +9,20 @@ const logger  = require('./logger');
 const API_HOST       = 'patrins.com';
 const API_BASE       = 'https://' + API_HOST;
 const SYNC_ROOT_NAME = 'Desktop Sync';
-const STATE_FILE     = () => path.join(app.getPath('userData'), 'sync-state.json');
-const TUS_URLS_FILE  = () => path.join(app.getPath('userData'), 'tus-resume-urls.json');
+const STATE_FILE     = (id) => path.join(app.getPath('userData'), id ? `sync-state-${id}.json` : 'sync-state.json');
+const TUS_URLS_FILE  = (id) => path.join(app.getPath('userData'), id ? `tus-urls-${id}.json`   : 'tus-resume-urls.json');
 const TIMEOUT_MIN_MS = 60_000;
 const TIMEOUT_RATE   = 256 * 1024;
 const MAX_SYNC_SIZE  = 50 * 1024 * 1024 * 1024; // 50 GB hard cap per file
 
 // Persistent tus upload URL store — survives process restarts for true resume
 class FileUrlStorage {
+  constructor(instanceId = null) { this._id = instanceId; }
   _read() {
-    try { return JSON.parse(fs.readFileSync(TUS_URLS_FILE(), 'utf8')); } catch { return {}; }
+    try { return JSON.parse(fs.readFileSync(TUS_URLS_FILE(this._id), 'utf8')); } catch { return {}; }
   }
   _write(data) {
-    try { fs.writeFileSync(TUS_URLS_FILE(), JSON.stringify(data)); } catch (_) {}
+    try { fs.writeFileSync(TUS_URLS_FILE(this._id), JSON.stringify(data)); } catch (_) {}
   }
   async findAllUploads() { return Object.values(this._read()); }
   async findUploadsByFingerprint(fp) {
@@ -37,28 +38,45 @@ class FileUrlStorage {
 }
 
 class SyncEngine extends EventEmitter {
-  constructor(store, getSession) {
+  /**
+   * @param {object} store          electron-store instance
+   * @param {function} getSession   returns the Electron session
+   * @param {string|null} folderOverride  if set, overrides the store syncFolder (for watch folders)
+   * @param {string|null} instanceId      unique ID for this engine (used to namespace state files)
+   */
+  constructor(store, getSession, folderOverride = null, instanceId = null) {
     super();
-    this.store         = store;
-    this.getSession    = getSession;
-    this.watcher       = null;
-    this.queue         = new Map();
-    this.processing    = false;
-    this.paused        = false;
-    this.fileState     = {};
-    this.folderIds     = {};
-    this.rootId        = null;
-    this.lastSync      = null;
-    this._currentState = 'stopped';
+    this.store           = store;
+    this.getSession      = getSession;
+    this._folderOverride = folderOverride;
+    this._instanceId     = instanceId;
+    this.watcher         = null;
+    this.queue           = new Map();
+    this.processing      = false;
+    this.paused          = false;
+    this.fileState       = {};
+    this.folderIds       = {};
+    this.rootId          = null;
+    this.lastSync        = null;
+    this._currentState   = 'stopped';
   }
 
-  get localFolder() { return this.store.get('syncFolder') || null; }
+  get localFolder() {
+    return this._folderOverride || this.store.get('syncFolder') || null;
+  }
+
+  get _syncRootName() {
+    if (!this._folderOverride) return SYNC_ROOT_NAME;
+    return 'Watch: ' + path.basename(this._folderOverride);
+  }
 
   // ── Auth ───────────────────────────────────────────────────────────────────
 
   async _getToken() {
+    const session = typeof this.getSession === 'function' ? this.getSession() : this.getSession;
+    if (!session) throw new Error('No session available');
     try {
-      const cookies = await this.getSession().cookies.get({ url: API_BASE });
+      const cookies = await session.cookies.get({ url: API_BASE });
       const tok = cookies.find(c => c.name === 'token');
       if (!tok) throw new Error('not logged in');
       return tok.value;
@@ -92,7 +110,7 @@ class SyncEngine extends EventEmitter {
         chunkSize:  15 * 1024 * 1024,
         retryDelays: [0, 3000, 5000, 10000, 20000],
         storePreviousUploads: true,
-        urlStorage: new FileUrlStorage(),
+        urlStorage: new FileUrlStorage(this._instanceId),
         headers: { Cookie: 'token=' + token },
         metadata: {
           filename:  fileName,
@@ -300,7 +318,8 @@ class SyncEngine extends EventEmitter {
   // ── Server folder management ───────────────────────────────────────────────
 
   async _ensureRootFolder() {
-    const cached = this.store.get('syncRootFolderId');
+    const cacheKey = this._instanceId ? `syncRootFolderId_${this._instanceId}` : 'syncRootFolderId';
+    const cached = this.store.get(cacheKey);
     if (cached) {
       try {
         const data = await this._get('/api/folders');
@@ -308,19 +327,20 @@ class SyncEngine extends EventEmitter {
           this.rootId = cached; return;
         }
       } catch (_) {}
-      this.store.delete('syncRootFolderId');
+      this.store.delete(cacheKey);
     }
 
+    const rootName = this._syncRootName;
     const data     = await this._get('/api/folders');
-    const existing = (data.folders || []).find(f => f.name === SYNC_ROOT_NAME && !f.parentId);
+    const existing = (data.folders || []).find(f => f.name === rootName && !f.parentId);
     if (existing) {
       this.rootId = existing.id;
     } else {
-      const created = await this._post('/api/folders', { name: SYNC_ROOT_NAME });
+      const created = await this._post('/api/folders', { name: rootName });
       if (!created.id) throw new Error('Folder creation returned no ID');
       this.rootId = created.id;
     }
-    this.store.set('syncRootFolderId', this.rootId);
+    this.store.set(cacheKey, this.rootId);
   }
 
   async _ensureFolderPath(relDir) {
@@ -379,11 +399,11 @@ class SyncEngine extends EventEmitter {
   // ── State persistence ──────────────────────────────────────────────────────
 
   _loadState()  {
-    try { return JSON.parse(fs.readFileSync(STATE_FILE(), 'utf8')); } catch { return {}; }
+    try { return JSON.parse(fs.readFileSync(STATE_FILE(this._instanceId), 'utf8')); } catch { return {}; }
   }
 
   _saveState() {
-    try { fs.writeFileSync(STATE_FILE(), JSON.stringify(this.fileState)); } catch (_) {}
+    try { fs.writeFileSync(STATE_FILE(this._instanceId), JSON.stringify(this.fileState)); } catch (_) {}
   }
 
   _status(state, extra = {}) {

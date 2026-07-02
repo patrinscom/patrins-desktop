@@ -1,4 +1,4 @@
-const { app, BrowserWindow, shell, ipcMain, dialog, Menu, clipboard, net, Notification, screen, powerMonitor } = require('electron');
+const { app, BrowserWindow, shell, ipcMain, dialog, Menu, clipboard, net, Notification, screen, powerMonitor, protocol } = require('electron');
 const { autoUpdater } = require('electron-updater');
 const Store = require('electron-store');
 const path = require('path');
@@ -6,7 +6,10 @@ const fs = require('fs');
 const os = require('os');
 const { exec } = require('child_process');
 const { createTray, updateTrayMenu } = require('./tray');
+const { showDropWindow, initDropIPC } = require('./drop-window');
+const { registerContextMenu } = require('./context-menu');
 const SyncEngine = require('./sync');
+const LanEngine  = require('./lan');
 const logger = require('./logger');
 
 // ── Lightweight profile ───────────────────────────────────────────────────────
@@ -22,8 +25,81 @@ const store = new Store();
 let mainWindow = null;
 let tray = null;
 
-// ── Sync engine ───────────────────────────────────────────────────────────────
+// ── UI cache (zero-latency load) ───────────────────────────────────────────────
+const UI_CACHE_PATH    = path.join(app.getPath('userData'), 'dashboard-cache.html');
+const UI_CACHE_META    = path.join(app.getPath('userData'), 'dashboard-cache-meta.json');
+const UI_CACHE_MAX_AGE = 60 * 60 * 1000; // 1 hour — refresh from network after this
+
+function readCacheMeta() {
+  try { return JSON.parse(fs.readFileSync(UI_CACHE_META, 'utf8')); } catch { return null; }
+}
+
+function isCacheValid() {
+  const meta = readCacheMeta();
+  return meta && (Date.now() - meta.savedAt) < UI_CACHE_MAX_AGE && fs.existsSync(UI_CACHE_PATH);
+}
+
+async function saveUICache(webContents) {
+  try {
+    let html = await webContents.executeJavaScript('document.documentElement.outerHTML');
+    // Inject <base> so relative URLs work when loaded from file://
+    html = html.replace('<head>', '<head>\n<base href="https://patrins.com/">');
+    fs.writeFileSync(UI_CACHE_PATH, html, 'utf8');
+    fs.writeFileSync(UI_CACHE_META, JSON.stringify({ savedAt: Date.now() }), 'utf8');
+  } catch (_) {}
+}
+
+// ── Primary sync engine ────────────────────────────────────────────────────────
 const sync = new SyncEngine(store, () => mainWindow?.webContents?.session);
+
+// ── Watch-folder engines (one per extra watched folder) ────────────────────────
+const watchSyncs = new Map(); // absPath → SyncEngine
+
+function getWatchFolders() { return store.get('watchFolders', []); }
+
+function addWatchFolder(folderPath) {
+  const abs = path.resolve(folderPath);
+  if (watchSyncs.has(abs)) return false;
+  if (!fs.existsSync(abs)) return false;
+
+  const id = require('crypto').createHash('md5').update(abs).digest('hex').slice(0, 8);
+  const engine = new SyncEngine(store, () => mainWindow?.webContents?.session, abs, id);
+  watchSyncs.set(abs, engine);
+
+  engine.on('status', (data) => {
+    mainWindow?.webContents?.send('sync:watch-status', { folder: abs, ...data });
+    updateTrayMenu(undefined, undefined, [...watchSyncs.keys()].map(p => ({
+      path: p, state: watchSyncs.get(p).getStatus().state,
+    })));
+  });
+
+  // Start if user is logged in (session has token)
+  engine.start().catch(e => console.error('[WatchFolder] Start failed:', e.message));
+
+  const folders = getWatchFolders();
+  if (!folders.includes(abs)) store.set('watchFolders', [...folders, abs]);
+  notify('Watch Folder Added', path.basename(abs) + ' is now syncing to Patrins.');
+  mainWindow?.webContents?.send('sync:watch-folders-changed', getWatchFolders());
+  return true;
+}
+
+function removeWatchFolder(folderPath) {
+  const abs = path.resolve(folderPath);
+  const engine = watchSyncs.get(abs);
+  if (engine) { engine.stop(); watchSyncs.delete(abs); }
+  store.set('watchFolders', getWatchFolders().filter(f => f !== abs));
+  mainWindow?.webContents?.send('sync:watch-folders-changed', getWatchFolders());
+}
+
+// ── LAN P2P engine ─────────────────────────────────────────────────────────────
+const lan = new LanEngine(store);
+
+lan.on('file-received', ({ from, fileName, savePath }) => {
+  notify(`File from ${from}`, `${fileName} saved to Downloads`);
+  mainWindow?.webContents?.send('lan:file-received', { from, fileName, savePath });
+});
+lan.on('peer-found',    (peers) => mainWindow?.webContents?.send('lan:peers', peers));
+lan.on('peers-changed', (peers) => mainWindow?.webContents?.send('lan:peers', peers));
 
 sync.on('status', (data) => {
   mainWindow?.webContents?.send('sync:status', data);
@@ -59,18 +135,83 @@ function handleDeepLink(url) {
         mainWindow?.show();
         mainWindow?.focus();
       }
+
     } else if (parsed.hostname === 'download') {
       const fileId = parsed.searchParams.get('fileId');
       const name   = parsed.searchParams.get('name') || 'download';
       const key    = parsed.searchParams.get('key') || null;
-      // Validate deep link params before passing to executeJavaScript
       if (fileId && /^[a-zA-Z0-9_-]{1,64}$/.test(fileId)) {
         const safeName = name.replace(/[^\w\s.\-()[\]]/g, '').slice(0, 255) || 'download';
         const safeKey  = key && /^[a-fA-F0-9]{1,128}$/.test(key) ? key : null;
         triggerDesktopDownload(fileId, safeName, safeKey);
       }
+
+    } else if (parsed.hostname === 'upload') {
+      // Right-click → Upload to Patrins
+      const filePath = parsed.searchParams.get('path');
+      if (filePath) uploadFileViaContextMenu(decodeURIComponent(filePath));
+
+    } else if (parsed.hostname === 'uploadhere') {
+      // Right-click background → Upload files here
+      const folderPath = parsed.searchParams.get('path');
+      if (folderPath) {
+        mainWindow?.show(); mainWindow?.focus();
+        mainWindow?.webContents?.send('shell:upload-here', decodeURIComponent(folderPath));
+      }
+
+    } else if (parsed.hostname === 'watch') {
+      // Right-click folder → Watch with Patrins
+      const folderPath = parsed.searchParams.get('path');
+      if (folderPath) {
+        const abs = path.resolve(decodeURIComponent(folderPath));
+        addWatchFolder(abs);
+        mainWindow?.show();
+        mainWindow?.focus();
+      }
     }
   } catch (_) {}
+}
+
+async function uploadFileViaContextMenu(filePath) {
+  const abs = path.resolve(filePath);
+  if (!fs.existsSync(abs)) { notify('Patrins', 'File not found: ' + path.basename(abs)); return; }
+
+  notify('Patrins', 'Uploading ' + path.basename(abs) + '…');
+  mainWindow?.show();
+
+  let token;
+  try { token = await sync._getToken(); }
+  catch (_) {
+    // Not logged in — open dashboard and prompt user to log in first
+    mainWindow?.loadURL(DASHBOARD_URL);
+    notify('Patrins', 'Please log in first, then try again.');
+    return;
+  }
+
+  const tus     = require('tus-js-client');
+  const name    = path.basename(abs);
+  const size    = fs.statSync(abs).size;
+
+  return new Promise((resolve) => {
+    let fileId = null;
+    const upload = new tus.Upload(fs.createReadStream(abs), {
+      endpoint:    'https://patrins.com/api/tus/',
+      uploadSize:  size,
+      chunkSize:   10 * 1024 * 1024,
+      retryDelays: [0, 3000, 5000],
+      headers:     { Cookie: 'token=' + token },
+      metadata:    { filename: name, filetype: 'application/octet-stream', isTemp: 'false' },
+      onAfterResponse: (_req, res) => { const id = res.getHeader('X-File-Id'); if (id) fileId = id; },
+      onError:   (err) => { notify('Upload Failed', name + ': ' + err.message.split('\n')[0]); resolve(); },
+      onSuccess: () => {
+        const link = `https://patrins.com/f/${fileId}`;
+        clipboard.writeText(link);
+        notify('Uploaded! Link copied', name);
+        resolve();
+      },
+    });
+    upload.start();
+  });
 }
 
 function triggerDesktopDownload(fileId, fileName, keyString) {
@@ -402,7 +543,21 @@ function createWindow() {
 
   registerWindowShortcuts(mainWindow);
 
-  // Intercept at network layer (catches 302 redirects, not just link clicks)
+  // ── CORS fix: when HTML is served from file:// (UI cache), spoof Origin so
+  // API calls to https://patrins.com look same-origin from the server's perspective
+  mainWindow.webContents.session.webRequest.onBeforeSendHeaders(
+    { urls: ['https://patrins.com/*'] },
+    (details, callback) => {
+      const headers = { ...details.requestHeaders };
+      if (!headers['Origin'] || headers['Origin'] === 'null') {
+        headers['Origin']  = 'https://patrins.com';
+        headers['Referer'] = 'https://patrins.com/dashboard';
+      }
+      callback({ requestHeaders: headers });
+    }
+  );
+
+  // ── Intercept at network layer (catches 302 redirects, not just link clicks)
   mainWindow.webContents.session.webRequest.onBeforeRequest(
     { urls: ['*://patrins.com/api/auth/google*', '*://accounts.google.com/*'] },
     (details, callback) => {
@@ -431,7 +586,25 @@ function createWindow() {
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
   );
 
-  mainWindow.loadURL(DASHBOARD_URL);
+  // Show instantly from cache if fresh; otherwise show app shell then load network
+  if (isCacheValid()) {
+    mainWindow.loadFile(UI_CACHE_PATH);
+    // Refresh cache in background after 30s (silently)
+    setTimeout(() => {
+      if (!mainWindow?.isDestroyed()) {
+        const bg = new BrowserWindow({ show: false, webPreferences: { session: mainWindow.webContents.session } });
+        bg.loadURL(DASHBOARD_URL);
+        bg.webContents.once('did-finish-load', async () => {
+          await saveUICache(bg.webContents);
+          bg.destroy();
+        });
+        bg.webContents.on('did-fail-load', () => bg.destroy());
+      }
+    }, 30_000);
+  } else {
+    mainWindow.loadFile(path.join(__dirname, 'app-shell.html'));
+    setTimeout(() => { if (!mainWindow?.isDestroyed()) mainWindow.loadURL(DASHBOARD_URL); }, 120);
+  }
 
   // window.open() calls: load patrins.com popups in the main window (no URL bar to get stuck),
   // everything else goes to the system browser
@@ -515,6 +688,10 @@ function createWindow() {
     if (url.includes('patrins.com/dashboard')) {
       mountDavDrive();
       if (store.get('syncEnabled', false) && store.get('syncFolder')) sync.start();
+      // Re-start any watch folder engines
+      for (const [fp, engine] of watchSyncs) {
+        if (!engine.watcher) engine.start().catch(() => {});
+      }
     }
   });
   // Backup trigger: did-finish-load fires more reliably on initial cold load
@@ -523,6 +700,8 @@ function createWindow() {
     if (url.includes('patrins.com/dashboard')) {
       mountDavDrive();
       if (store.get('syncEnabled', false) && store.get('syncFolder') && !sync.watcher) sync.start();
+      // Cache the rendered dashboard HTML for zero-latency next launch
+      saveUICache(mainWindow.webContents);
     }
   });
 
@@ -639,7 +818,7 @@ process.on('unhandledRejection', (reason) => {
   logger.log('unhandled_rejection', { error: msg });
 });
 
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   app.setAppUserModelId('com.patrins.desktop'); // required for Windows toast notifications
   app.setAsDefaultProtocolClient('patrins');
 
@@ -651,7 +830,7 @@ app.whenReady().then(() => {
   }
 
   createWindow();
-  tray = createTray(mainWindow);
+  tray = createTray(mainWindow, { showDropWindow });
   setupAutoUpdater();
 
   // Re-mount WebDAV drive after PC wakes from sleep
@@ -662,6 +841,25 @@ app.whenReady().then(() => {
   // Tray pause/resume clicks relay to sync
   app.on('sync:pause-from-tray',  () => sync.pause());
   app.on('sync:resume-from-tray', () => sync.resume());
+
+  // Drop window IPC (uses sync engine's token getter)
+  initDropIPC(() => sync._getToken());
+
+  // Context menu shell extension (Windows only, runs silently in background)
+  registerContextMenu().catch(() => {});
+
+  // Restore watch folders from last session
+  for (const fp of getWatchFolders()) {
+    if (fs.existsSync(fp)) {
+      const id = require('crypto').createHash('md5').update(fp).digest('hex').slice(0, 8);
+      const engine = new SyncEngine(store, () => mainWindow?.webContents?.session, fp, id);
+      watchSyncs.set(fp, engine);
+      engine.on('status', (data) => {
+        mainWindow?.webContents?.send('sync:watch-status', { folder: fp, ...data });
+      });
+      // Don't auto-start yet — will start after dashboard login (did-navigate)
+    }
+  }
 
   // Handle deep link if app was launched via patrins:// URL
   const deepLinkArg = process.argv.find(arg => arg.startsWith('patrins://'));
@@ -726,6 +924,61 @@ ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('update:check', async () => {
   try { await autoUpdater.checkForUpdates(); } catch (_) {}
 });
+
+// ── Watch Folders IPC ──────────────────────────────────────────────────────────
+ipcMain.handle('watchfolders:list',   () => getWatchFolders());
+ipcMain.handle('watchfolders:add',    async (_, folderPath) => {
+  // Show folder picker if no path given
+  if (!folderPath) {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose Watch Folder', properties: ['openDirectory', 'createDirectory'],
+    });
+    if (canceled) return { ok: false };
+    folderPath = filePaths[0];
+  }
+  const ok = addWatchFolder(folderPath);
+  return { ok, folders: getWatchFolders() };
+});
+ipcMain.handle('watchfolders:remove', (_, folderPath) => {
+  removeWatchFolder(folderPath);
+  return { ok: true, folders: getWatchFolders() };
+});
+ipcMain.handle('watchfolders:status', () => {
+  const result = {};
+  for (const [fp, engine] of watchSyncs) result[fp] = engine.getStatus();
+  return result;
+});
+
+// ── LAN P2P IPC ────────────────────────────────────────────────────────────────
+ipcMain.handle('lan:start', async () => {
+  try {
+    let username = 'Patrins User';
+    try {
+      const cookies = await mainWindow.webContents.session.cookies.get({ url: 'https://patrins.com' });
+      const displayName = cookies.find(c => c.name === 'display_name');
+      if (displayName) username = displayName.value;
+    } catch (_) {}
+    await lan.start(username, app.getPath('downloads'));
+    return { ok: true, ip: lan.localIP, port: lan._httpPort };
+  } catch (e) {
+    return { ok: false, error: e.message };
+  }
+});
+ipcMain.on('lan:stop', () => lan.stop());
+ipcMain.handle('lan:peers',    () => lan.getPeers());
+ipcMain.handle('lan:send-file', async (_, { peerId, filePath }) => {
+  if (!filePath) {
+    const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
+      title: 'Choose File to Send',
+      properties: ['openFile'],
+    });
+    if (canceled) return { ok: false };
+    filePath = filePaths[0];
+  }
+  return lan.sendFile(peerId, filePath);
+});
+
+lan.on('send-progress', (data) => mainWindow?.webContents?.send('lan:send-progress', data));
 
 // ── Desktop download engine (IDM-style: N threads → OS temp files → assemble) ─
 const _dlActive = new Map(); // downloadId → { cancelled, activeReqs }

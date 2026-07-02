@@ -2,10 +2,12 @@ const { Tray, Menu, app, shell, nativeImage } = require('electron');
 const path = require('path');
 const logger = require('./logger');
 
-let tray = null;
-let _mainWindow = null;
-let _syncState = null;
+let tray         = null;
+let _mainWindow  = null;
+let _syncState   = null;
 let _driveLetter = null;
+let _watchFolders = []; // [{path, state}]
+let _callbacks   = {};
 
 const DASHBOARD_URL = 'https://patrins.com/dashboard';
 
@@ -20,6 +22,10 @@ function buildMenu() {
       click: () => { _mainWindow.loadURL(DASHBOARD_URL); _mainWindow.show(); _mainWindow.focus(); },
     },
     { type: 'separator' },
+    {
+      label: 'Quick Upload…',
+      click: () => { if (_callbacks.showDropWindow) _callbacks.showDropWindow(); },
+    },
   ];
 
   if (_driveLetter) {
@@ -46,6 +52,20 @@ function buildMenu() {
     }
   }
 
+  // Watch folders section
+  if (_watchFolders.length > 0) {
+    items.push({ type: 'separator' });
+    items.push({ label: 'Watch Folders', enabled: false });
+    for (const wf of _watchFolders) {
+      const icon = wf.state === 'syncing' ? '⟳' : wf.state === 'error' ? '✕' : '✓';
+      items.push({
+        label:   `  ${icon} ${path.basename(wf.path)}`,
+        enabled: true,
+        click:   () => shell.openPath(wf.path),
+      });
+    }
+  }
+
   items.push(
     { type: 'separator' },
     {
@@ -60,8 +80,9 @@ function buildMenu() {
   return Menu.buildFromTemplate(items);
 }
 
-function createTray(mainWindow) {
+function createTray(mainWindow, callbacks = {}) {
   _mainWindow = mainWindow;
+  _callbacks  = callbacks;
   const icon = nativeImage.createFromPath(path.join(__dirname, '../assets/icon.ico'));
   tray = new Tray(icon.resize({ width: 16, height: 16 }));
   tray.setToolTip('Patrins');
@@ -75,10 +96,11 @@ function createTray(mainWindow) {
   return tray;
 }
 
-function updateTrayMenu(syncState, driveLetter) {
+function updateTrayMenu(syncState, driveLetter, watchFolders) {
   if (!tray) return;
   if (syncState    !== undefined) _syncState    = syncState;
   if (driveLetter  !== undefined) _driveLetter  = driveLetter;
+  if (watchFolders !== undefined) _watchFolders = watchFolders;
   tray.setContextMenu(buildMenu());
 }
 

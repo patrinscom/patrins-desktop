@@ -1,0 +1,106 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Patrins</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body {
+    height: 100%;
+    background: #0e0f14;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: -apple-system, 'Segoe UI', sans-serif;
+    overflow: hidden;
+    -webkit-app-region: drag;
+  }
+  .center {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 20px;
+    animation: fadeIn 0.3s ease;
+  }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+  .logo-wrap {
+    position: relative;
+    width: 64px;
+    height: 64px;
+  }
+  .logo-wrap svg { width: 64px; height: 64px; border-radius: 16px; }
+  .pulse {
+    position: absolute;
+    inset: -8px;
+    border-radius: 24px;
+    background: rgba(79,91,255,0.15);
+    animation: pulse 2s ease-in-out infinite;
+  }
+  @keyframes pulse {
+    0%,100% { opacity: 0.4; transform: scale(1); }
+    50%      { opacity: 1;   transform: scale(1.08); }
+  }
+
+  .wordmark {
+    font-size: 22px;
+    font-weight: 700;
+    letter-spacing: -0.04em;
+    color: #e8e6e1;
+  }
+  .loading-dots {
+    display: flex;
+    gap: 5px;
+    align-items: center;
+  }
+  .loading-dots span {
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
+    background: #3a3a50;
+    animation: dot 1.4s ease-in-out infinite;
+  }
+  .loading-dots span:nth-child(2) { animation-delay: 0.2s; }
+  .loading-dots span:nth-child(3) { animation-delay: 0.4s; }
+  @keyframes dot {
+    0%,80%,100% { background: #3a3a50; transform: scale(1); }
+    40%         { background: #4f5bff; transform: scale(1.3); }
+  }
+  .status {
+    font-size: 12px;
+    color: #444;
+    letter-spacing: 0.02em;
+  }
+</style>
+</head>
+<body>
+<div class="center">
+  <div class="logo-wrap">
+    <div class="pulse"></div>
+    <svg viewBox="0 0 128 128" fill="none" xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <linearGradient id="pla" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#8EA5FF"/><stop offset="1" stop-color="#4F5BFF"/></linearGradient>
+        <linearGradient id="plb" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#4F5BFF"/><stop offset="1" stop-color="#3741D6"/></linearGradient>
+        <linearGradient id="plc" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3741D6"/><stop offset="1" stop-color="#2E36B8"/></linearGradient>
+      </defs>
+      <rect x="14" y="56" width="86" height="56" rx="12" fill="url(#plc)"/>
+      <rect x="22" y="40" width="86" height="56" rx="12" fill="url(#plb)"/>
+      <rect x="30" y="24" width="86" height="56" rx="12" fill="url(#pla)"/>
+    </svg>
+  </div>
+  <div class="wordmark">Patrins</div>
+  <div class="loading-dots">
+    <span></span><span></span><span></span>
+  </div>
+  <div class="status" id="statusText">Connecting…</div>
+</div>
+<script>
+  // Show loading status messages
+  const msgs = ['Connecting…', 'Loading your drive…', 'Almost ready…'];
+  let i = 0;
+  const el = document.getElementById('statusText');
+  setInterval(() => { i = (i + 1) % msgs.length; el.textContent = msgs[i]; }, 1800);
+</script>
+</body>
+</html>

@@ -57,4 +57,48 @@ contextBridge.exposeInMainWorld('patrinsApp', {
     return h;
   },
   offFindResult: (h) => ipcRenderer.removeListener('find-result', h),
+
+  // Watch Folders
+  getWatchFolders:    ()     => ipcRenderer.invoke('watchfolders:list'),
+  addWatchFolder:     (path) => ipcRenderer.invoke('watchfolders:add', path),
+  removeWatchFolder:  (path) => ipcRenderer.invoke('watchfolders:remove', path),
+  getWatchFolderStatus: ()   => ipcRenderer.invoke('watchfolders:status'),
+  onWatchFoldersChanged: (cb) => {
+    const h = (_e, data) => cb(data);
+    ipcRenderer.on('sync:watch-folders-changed', h);
+    return h;
+  },
+  onWatchStatus: (cb) => {
+    const h = (_e, data) => cb(data);
+    ipcRenderer.on('sync:watch-status', h);
+    return h;
+  },
+
+  // LAN P2P
+  lanStart:    ()                      => ipcRenderer.invoke('lan:start'),
+  lanStop:     ()                      => ipcRenderer.send('lan:stop'),
+  lanPeers:    ()                      => ipcRenderer.invoke('lan:peers'),
+  lanSendFile: (peerId, filePath)      => ipcRenderer.invoke('lan:send-file', { peerId, filePath }),
+  onLanPeers: (cb) => {
+    const h = (_e, data) => cb(data);
+    ipcRenderer.on('lan:peers', h);
+    return h;
+  },
+  onLanFileReceived: (cb) => {
+    const h = (_e, data) => cb(data);
+    ipcRenderer.on('lan:file-received', h);
+    return h;
+  },
+  onLanSendProgress: (cb) => {
+    const h = (_e, data) => cb(data);
+    ipcRenderer.on('lan:send-progress', h);
+    return h;
+  },
+
+  // Shell integration events (context menu → upload here)
+  onShellUploadHere: (cb) => {
+    const h = (_e, data) => cb(data);
+    ipcRenderer.on('shell:upload-here', h);
+    return h;
+  },
 });

@@ -1,0 +1,238 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Patrins Quick Upload</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: -apple-system, 'Segoe UI', sans-serif;
+    background: rgba(12, 13, 18, 0.96);
+    border: 1px solid rgba(255,255,255,0.09);
+    border-radius: 16px;
+    height: 100vh;
+    overflow: hidden;
+    color: #e8e6e1;
+    user-select: none;
+    -webkit-app-region: drag;
+  }
+  .title-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 12px 14px 8px;
+  }
+  .brand {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 13px;
+    font-weight: 600;
+    letter-spacing: -0.01em;
+    color: #e8e6e1;
+  }
+  .brand-logo {
+    width: 18px;
+    height: 18px;
+    border-radius: 5px;
+    background: linear-gradient(135deg, #8ea5ff 0%, #4f5bff 50%, #3741d6 100%);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+  }
+  .close-btn {
+    -webkit-app-region: no-drag;
+    width: 22px;
+    height: 22px;
+    border-radius: 50%;
+    background: rgba(255,255,255,0.08);
+    border: none;
+    color: #888;
+    cursor: pointer;
+    font-size: 15px;
+    line-height: 22px;
+    text-align: center;
+    transition: background 0.15s, color 0.15s;
+  }
+  .close-btn:hover { background: rgba(255,255,255,0.15); color: #ccc; }
+
+  .drop-zone {
+    -webkit-app-region: no-drag;
+    margin: 4px 12px 10px;
+    border: 1.5px dashed rgba(79, 91, 255, 0.35);
+    border-radius: 12px;
+    height: 148px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    color: #555;
+    font-size: 12.5px;
+    transition: all 0.18s ease;
+    cursor: default;
+    position: relative;
+  }
+  .drop-zone.hover {
+    border-color: #4f5bff;
+    background: rgba(79, 91, 255, 0.08);
+  }
+  .drop-zone.uploading {
+    border-color: rgba(79, 91, 255, 0.5);
+    border-style: solid;
+  }
+  .drop-icon {
+    font-size: 28px;
+    opacity: 0.7;
+    transition: transform 0.2s;
+  }
+  .drop-zone.hover .drop-icon { transform: scale(1.1); opacity: 1; }
+  .drop-label { color: #777; font-size: 12.5px; }
+  .drop-sublabel { color: #3a3a40; font-size: 11px; }
+  .drop-zone.hover .drop-label { color: #aaa; }
+  .drop-zone.hover .drop-sublabel { color: #555; }
+
+  .files-area {
+    margin: 0 12px 10px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    max-height: 90px;
+    overflow-y: auto;
+  }
+  .file-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 5px 8px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 7px;
+    font-size: 11.5px;
+  }
+  .file-name { flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #bbb; }
+  .file-status { flex-shrink: 0; font-size: 11px; }
+  .file-status.done   { color: #4ade80; }
+  .file-status.error  { color: #f87171; }
+  .file-status.active { color: #6366f1; }
+  .file-progress {
+    height: 2px;
+    background: rgba(79,91,255,0.15);
+    border-radius: 1px;
+    margin-top: 3px;
+    overflow: hidden;
+  }
+  .file-progress-fill {
+    height: 100%;
+    background: #4f5bff;
+    border-radius: 1px;
+    transition: width 0.25s;
+  }
+
+  .footer {
+    padding: 0 12px 10px;
+    font-size: 10.5px;
+    color: #333;
+    text-align: center;
+  }
+</style>
+</head>
+<body>
+<div class="title-bar">
+  <div class="brand">
+    <div class="brand-logo">P</div>
+    Quick Upload
+  </div>
+  <button class="close-btn" id="closeBtn">×</button>
+</div>
+
+<div class="drop-zone" id="dropZone">
+  <div class="drop-icon">📂</div>
+  <div class="drop-label">Drop files to upload</div>
+  <div class="drop-sublabel">Link copied to clipboard</div>
+</div>
+
+<div class="files-area" id="filesArea"></div>
+
+<div class="footer">Drag files onto this window to upload them to your Patrins drive</div>
+
+<script>
+const closeBtn  = document.getElementById('closeBtn');
+const dropZone  = document.getElementById('dropZone');
+const filesArea = document.getElementById('filesArea');
+
+closeBtn.addEventListener('click', () => window.dropApi.close());
+
+const queue  = [];
+let busy     = false;
+const rows   = new Map(); // name → {row, progressFill, statusEl}
+
+function addRow(name) {
+  const row = document.createElement('div');
+  row.className = 'file-row';
+  row.innerHTML = `
+    <div class="file-name" title="${name}">${name}</div>
+    <div class="file-status active">Uploading…</div>
+    <div class="file-progress" style="width:100%">
+      <div class="file-progress-fill" style="width:0%"></div>
+    </div>`;
+  // Make progress bar span full row width
+  const inner = row.querySelector('.file-progress');
+  inner.style.cssText = 'width:100%;height:2px;background:rgba(79,91,255,0.15);border-radius:1px;margin-top:3px;overflow:hidden;display:block;';
+  const wrap = document.createElement('div');
+  wrap.style.cssText = 'display:flex;flex-direction:column;flex:1;min-width:0;';
+  const nameEl = row.querySelector('.file-name');
+  const statusEl = row.querySelector('.file-status');
+  nameEl.remove(); statusEl.remove(); inner.remove();
+  wrap.appendChild(nameEl);
+  wrap.appendChild(inner);
+  row.appendChild(wrap);
+  row.appendChild(statusEl);
+  filesArea.appendChild(row);
+  const progressFill = inner.querySelector('.file-progress-fill');
+  rows.set(name, { row, progressFill, statusEl });
+  return rows.get(name);
+}
+
+function setRowDone(name, ok, msg) {
+  const r = rows.get(name);
+  if (!r) return;
+  r.progressFill.style.width = '100%';
+  r.statusEl.textContent = ok ? '✓' : '✗';
+  r.statusEl.className = 'file-status ' + (ok ? 'done' : 'error');
+  if (!ok) r.row.title = msg;
+}
+
+window.dropApi.onProgress(({ name, pct }) => {
+  const r = rows.get(name);
+  if (r) r.progressFill.style.width = pct + '%';
+});
+
+async function processQueue() {
+  if (busy || !queue.length) return;
+  busy = true;
+  while (queue.length) {
+    const { path, name, size } = queue.shift();
+    dropZone.classList.add('uploading');
+    const result = await window.dropApi.upload(path, name, size);
+    setRowDone(name, result.ok, result.error);
+    dropZone.classList.remove('uploading');
+  }
+  busy = false;
+}
+
+document.addEventListener('dragover', (e) => { e.preventDefault(); dropZone.classList.add('hover'); });
+document.addEventListener('dragleave', (e) => { if (!dropZone.contains(e.relatedTarget)) dropZone.classList.remove('hover'); });
+document.addEventListener('drop', (e) => {
+  e.preventDefault();
+  dropZone.classList.remove('hover');
+  const files = Array.from(e.dataTransfer.files);
+  files.forEach(f => {
+    queue.push({ path: f.path, name: f.name, size: f.size });
+    addRow(f.name);
+  });
+  processQueue();
+});
+</script>
+</body>
+</html>
