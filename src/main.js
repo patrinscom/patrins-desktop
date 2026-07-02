@@ -94,12 +94,35 @@ function removeWatchFolder(folderPath) {
 // ── LAN P2P engine ─────────────────────────────────────────────────────────────
 const lan = new LanEngine(store);
 
+lan.on('incoming-request', async ({ requestId, senderName, fileName, fileSize }) => {
+  // Show native dialog — user accepts or denies
+  try {
+    const MB = (fileSize / 1048576).toFixed(1);
+    const GB = (fileSize / 1073741824).toFixed(2);
+    const sizeStr = fileSize >= 1073741824 ? `${GB} GB` : `${MB} MB`;
+    const { response } = await dialog.showMessageBox({
+      type:      'question',
+      buttons:   ['Accept', 'Deny'],
+      defaultId: 0,
+      cancelId:  1,
+      title:     'Incoming Local Transfer',
+      message:   `${senderName} wants to send you a file`,
+      detail:    `"${fileName}"  ·  ${sizeStr}\n\nFile will be saved to your Downloads folder.`,
+      icon:      path.join(__dirname, '../assets/icon.ico'),
+    });
+    lan.respondToRequest(requestId, response === 0);
+  } catch (_) {
+    lan.respondToRequest(requestId, false);
+  }
+});
+
 lan.on('file-received', ({ from, fileName, savePath }) => {
-  notify(`File from ${from}`, `${fileName} saved to Downloads`);
+  notify('Transfer complete', `"${fileName}" from ${from} — saved to Downloads`);
   mainWindow?.webContents?.send('lan:file-received', { from, fileName, savePath });
 });
-lan.on('peer-found',    (peers) => mainWindow?.webContents?.send('lan:peers', peers));
-lan.on('peers-changed', (peers) => mainWindow?.webContents?.send('lan:peers', peers));
+lan.on('receive-progress', (data) => mainWindow?.webContents?.send('lan:receive-progress', data));
+lan.on('peer-found',       (peers) => mainWindow?.webContents?.send('lan:peers', peers));
+lan.on('peers-changed',    (peers) => mainWindow?.webContents?.send('lan:peers', peers));
 
 sync.on('status', (data) => {
   mainWindow?.webContents?.send('sync:status', data);
@@ -952,33 +975,55 @@ ipcMain.handle('watchfolders:status', () => {
 // ── LAN P2P IPC ────────────────────────────────────────────────────────────────
 ipcMain.handle('lan:start', async () => {
   try {
-    let username = 'Patrins User';
+    let username = os.userInfo().username || 'Desktop';
     try {
+      // Try to get the logged-in Patrins display name from cookies
       const cookies = await mainWindow.webContents.session.cookies.get({ url: 'https://patrins.com' });
-      const displayName = cookies.find(c => c.name === 'display_name');
-      if (displayName) username = displayName.value;
+      const tok = cookies.find(c => c.name === 'token');
+      if (tok) {
+        // Fetch display name from the API
+        const info = await new Promise((res, rej) => {
+          const req = net.request({ method: 'GET', url: 'https://patrins.com/api/auth/me',
+            session: mainWindow.webContents.session, useSessionCookies: true });
+          let body = ''; req.on('response', r => { r.on('data', c => body += c); r.on('end', () => { try { res(JSON.parse(body)); } catch { rej(new Error('bad json')); } }); });
+          req.on('error', rej); req.end();
+        });
+        if (info?.display_name) username = info.display_name;
+        else if (info?.username) username = info.username;
+      }
     } catch (_) {}
-    await lan.start(username, app.getPath('downloads'));
-    return { ok: true, ip: lan.localIP, port: lan._httpPort };
+
+    const result = await lan.start(username, app.getPath('downloads'));
+    return { ok: true, ...result };
   } catch (e) {
     return { ok: false, error: e.message };
   }
 });
+
 ipcMain.on('lan:stop', () => lan.stop());
-ipcMain.handle('lan:peers',    () => lan.getPeers());
+ipcMain.handle('lan:peers', () => lan.getPeers());
+ipcMain.handle('lan:status', () => ({
+  running: lan._running,
+  ip:      lan.localIP,
+  port:    lan._httpPort,
+  peers:   lan.getPeers(),
+}));
+
 ipcMain.handle('lan:send-file', async (_, { peerId, filePath }) => {
   if (!filePath) {
     const { canceled, filePaths } = await dialog.showOpenDialog(mainWindow, {
-      title: 'Choose File to Send',
+      title: 'Choose File to Send via Local Network',
       properties: ['openFile'],
     });
-    if (canceled) return { ok: false };
+    if (canceled) return { ok: false, cancelled: true };
     filePath = filePaths[0];
   }
-  return lan.sendFile(peerId, filePath);
+  const result = await lan.sendFile(peerId, filePath);
+  return result;
 });
 
 lan.on('send-progress', (data) => mainWindow?.webContents?.send('lan:send-progress', data));
+lan.on('send-done',     (data) => mainWindow?.webContents?.send('lan:send-done', data));
 
 // ── Desktop download engine (IDM-style: N threads → OS temp files → assemble) ─
 const _dlActive = new Map(); // downloadId → { cancelled, activeReqs }

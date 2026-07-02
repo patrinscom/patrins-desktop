@@ -75,24 +75,35 @@ contextBridge.exposeInMainWorld('patrinsApp', {
   },
 
   // LAN P2P
-  lanStart:    ()                      => ipcRenderer.invoke('lan:start'),
-  lanStop:     ()                      => ipcRenderer.send('lan:stop'),
-  lanPeers:    ()                      => ipcRenderer.invoke('lan:peers'),
-  lanSendFile: (peerId, filePath)      => ipcRenderer.invoke('lan:send-file', { peerId, filePath }),
+  lanStart:    ()                 => ipcRenderer.invoke('lan:start'),
+  lanStop:     ()                 => ipcRenderer.send('lan:stop'),
+  lanPeers:    ()                 => ipcRenderer.invoke('lan:peers'),
+  lanStatus:   ()                 => ipcRenderer.invoke('lan:status'),
+  lanSendFile: (peerId, filePath) => ipcRenderer.invoke('lan:send-file', { peerId, filePath }),
   onLanPeers: (cb) => {
     const h = (_e, data) => cb(data);
     ipcRenderer.on('lan:peers', h);
-    return h;
+    return () => ipcRenderer.removeListener('lan:peers', h);
   },
   onLanFileReceived: (cb) => {
     const h = (_e, data) => cb(data);
     ipcRenderer.on('lan:file-received', h);
-    return h;
+    return () => ipcRenderer.removeListener('lan:file-received', h);
+  },
+  onLanReceiveProgress: (cb) => {
+    const h = (_e, data) => cb(data);
+    ipcRenderer.on('lan:receive-progress', h);
+    return () => ipcRenderer.removeListener('lan:receive-progress', h);
   },
   onLanSendProgress: (cb) => {
     const h = (_e, data) => cb(data);
     ipcRenderer.on('lan:send-progress', h);
-    return h;
+    return () => ipcRenderer.removeListener('lan:send-progress', h);
+  },
+  onLanSendDone: (cb) => {
+    const h = (_e, data) => cb(data);
+    ipcRenderer.on('lan:send-done', h);
+    return () => ipcRenderer.removeListener('lan:send-done', h);
   },
 
   // Shell integration events (context menu → upload here)
