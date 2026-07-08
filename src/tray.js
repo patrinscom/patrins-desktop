@@ -26,6 +26,10 @@ function buildMenu() {
       label: 'Quick Upload…',
       click: () => { if (_callbacks.showDropWindow) _callbacks.showDropWindow(); },
     },
+    {
+      label: 'Local Transfer…',
+      click: () => { if (_callbacks.showLanWindow) _callbacks.showLanWindow(); },
+    },
   ];
 
   if (_driveLetter) {

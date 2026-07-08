@@ -1,4 +1,4 @@
-const { BrowserWindow, ipcMain, clipboard, screen } = require('electron');
+const { BrowserWindow, ipcMain, clipboard, screen, dialog } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const tus = require('tus-js-client');
@@ -14,7 +14,7 @@ function showDropWindow() {
   }
 
   const { workAreaSize, workArea } = screen.getPrimaryDisplay();
-  const W = 320, H = 300;
+  const W = 320, H = 380;
   const x = (workArea.x || 0) + workAreaSize.width  - W - 20;
   const y = (workArea.y || 0) + workAreaSize.height - H - 20;
 
@@ -33,7 +33,6 @@ function showDropWindow() {
   });
 
   dropWin.loadFile(path.join(__dirname, 'drop.html'));
-  dropWin.on('blur',   () => { if (!dropWin?.isDestroyed()) dropWin.hide(); });
   dropWin.on('closed', () => { dropWin = null; });
 }
 
@@ -43,6 +42,16 @@ function hideDropWindow() {
 
 function initDropIPC(getToken) {
   _getToken = getToken;
+
+  ipcMain.handle('drop:pick-file', async () => {
+    const { canceled, filePaths } = await dialog.showOpenDialog({
+      title: 'Choose a file to upload',
+      properties: ['openFile'],
+    });
+    if (canceled || !filePaths[0]) return null;
+    const fp = filePaths[0];
+    return { path: fp, name: path.basename(fp), size: fs.statSync(fp).size };
+  });
 
   ipcMain.handle('drop:upload', async (event, { filePath, fileName, fileSize }) => {
     if (!filePath || typeof filePath !== 'string') return { ok: false, error: 'Invalid path' };

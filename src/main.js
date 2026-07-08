@@ -7,6 +7,7 @@ const os = require('os');
 const { exec } = require('child_process');
 const { createTray, updateTrayMenu } = require('./tray');
 const { showDropWindow, initDropIPC } = require('./drop-window');
+const { showLanWindow, getLanWindow, initLanWindowIPC, pushPeers, pushSendProgress, pushSendDone, pushIncoming, pushReceiveProgress, pushFileReceived } = require('./lan-window');
 const { registerContextMenu } = require('./context-menu');
 const SyncEngine = require('./sync');
 const LanEngine  = require('./lan');
@@ -42,11 +43,24 @@ function isCacheValid() {
 async function saveUICache(webContents) {
   try {
     let html = await webContents.executeJavaScript('document.documentElement.outerHTML');
-    // Inject <base> so relative URLs work when loaded from file://
+    // Sanity check — don't cache empty or error pages
+    if (!html || html.length < 10000) return;
+    if (!html.includes('id="app"') && !html.includes('class="sidebar"') && !html.includes('dashboard')) return;
+    // Inject <base> so relative URLs resolve to patrins.com from file://
     html = html.replace('<head>', '<head>\n<base href="https://patrins.com/">');
+    // Strip third-party tracking/analytics scripts that fail outside the CDN context
+    html = html.replace(/<script[^>]*cdn-cgi[^>]*>[\s\S]*?<\/script>/gi, '');
+    html = html.replace(/<script[^>]*cloudflare[^>]*>[\s\S]*?<\/script>/gi, '');
+    html = html.replace(/<script[^>]*beacon\.min[^>]*><\/script>/gi, '');
+    html = html.replace(/https:\/\/[^"']*\/cdn-cgi\/[^"']*/g, '');
     fs.writeFileSync(UI_CACHE_PATH, html, 'utf8');
     fs.writeFileSync(UI_CACHE_META, JSON.stringify({ savedAt: Date.now() }), 'utf8');
   } catch (_) {}
+}
+
+function clearUICache() {
+  try { fs.unlinkSync(UI_CACHE_PATH); } catch (_) {}
+  try { fs.unlinkSync(UI_CACHE_META); } catch (_) {}
 }
 
 // ── Primary sync engine ────────────────────────────────────────────────────────
@@ -95,6 +109,7 @@ function removeWatchFolder(folderPath) {
 const lan = new LanEngine(store);
 
 lan.on('incoming-request', async ({ requestId, senderName, fileName, fileSize }) => {
+  pushIncoming({ requestId, senderName, fileName, fileSize });
   // Show native dialog — user accepts or denies
   try {
     const MB = (fileSize / 1048576).toFixed(1);
@@ -119,10 +134,13 @@ lan.on('incoming-request', async ({ requestId, senderName, fileName, fileSize })
 lan.on('file-received', ({ from, fileName, savePath }) => {
   notify('Transfer complete', `"${fileName}" from ${from} — saved to Downloads`);
   mainWindow?.webContents?.send('lan:file-received', { from, fileName, savePath });
+  pushFileReceived({ from, fileName, savePath });
 });
-lan.on('receive-progress', (data) => mainWindow?.webContents?.send('lan:receive-progress', data));
-lan.on('peer-found',       (peers) => mainWindow?.webContents?.send('lan:peers', peers));
-lan.on('peers-changed',    (peers) => mainWindow?.webContents?.send('lan:peers', peers));
+lan.on('receive-progress', (data) => { mainWindow?.webContents?.send('lan:receive-progress', data); pushReceiveProgress(data); });
+lan.on('peer-found',    (peers) => { mainWindow?.webContents?.send('lan:peers', peers); pushPeers(peers); });
+lan.on('peers-changed', (peers) => { mainWindow?.webContents?.send('lan:peers', peers); pushPeers(peers); });
+lan.on('send-progress', (data)  => pushSendProgress(data));
+lan.on('send-done',     (data)  => pushSendDone(data));
 
 sync.on('status', (data) => {
   mainWindow?.webContents?.send('sync:status', data);
@@ -609,25 +627,15 @@ function createWindow() {
     'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
   );
 
-  // Show instantly from cache if fresh; otherwise show app shell then load network
-  if (isCacheValid()) {
-    mainWindow.loadFile(UI_CACHE_PATH);
-    // Refresh cache in background after 30s (silently)
-    setTimeout(() => {
-      if (!mainWindow?.isDestroyed()) {
-        const bg = new BrowserWindow({ show: false, webPreferences: { session: mainWindow.webContents.session } });
-        bg.loadURL(DASHBOARD_URL);
-        bg.webContents.once('did-finish-load', async () => {
-          await saveUICache(bg.webContents);
-          bg.destroy();
-        });
-        bg.webContents.on('did-fail-load', () => bg.destroy());
-      }
-    }, 30_000);
-  } else {
-    mainWindow.loadFile(path.join(__dirname, 'app-shell.html'));
-    setTimeout(() => { if (!mainWindow?.isDestroyed()) mainWindow.loadURL(DASHBOARD_URL); }, 120);
-  }
+  // Show the app-shell splash instantly, then load the live authenticated dashboard.
+  // We intentionally NO LONGER load a saved dashboard snapshot from file://: a page
+  // served from file:// is a different (opaque) origin from https://patrins.com, so its
+  // auth check (`/api/auth/me`) is cross-origin and can silently fail or stall — leaving
+  // the window blank with no crash and nothing in the console. app-shell.html gives an
+  // instant, reliable first paint; the real UI always comes from the live origin.
+  clearUICache(); // purge any snapshot written by older versions
+  mainWindow.loadFile(path.join(__dirname, 'app-shell.html'));
+  setTimeout(() => { if (!mainWindow?.isDestroyed()) mainWindow.loadURL(DASHBOARD_URL); }, 120);
 
   // window.open() calls: load patrins.com popups in the main window (no URL bar to get stuck),
   // everything else goes to the system browser
@@ -697,7 +705,24 @@ function createWindow() {
   mainWindow.webContents.on('did-stop-loading', () => mainWindow.setProgressBar(-1));
 
   // Show download progress on taskbar
-  mainWindow.webContents.session.on('will-download', (event, item) => {
+  mainWindow.webContents.session.on('will-download', (event, item, webContents) => {
+    // Files received via Local Transfer auto-save to Downloads (no Save-As prompt per file)
+    const lw = getLanWindow();
+    if (lw && !lw.isDestroyed() && webContents === lw.webContents) {
+      try {
+        const dir  = app.getPath('downloads');
+        const name = item.getFilename() || 'download';
+        const ext  = path.extname(name);
+        const base = path.basename(name, ext);
+        let target = path.join(dir, name);
+        let n = 1;
+        while (fs.existsSync(target)) target = path.join(dir, `${base} (${n++})${ext}`);
+        item.setSavePath(target);
+        item.once('done', (e, state) => {
+          if (state === 'completed') notify('File received', `${path.basename(target)} — saved to Downloads`);
+        });
+      } catch (_) {}
+    }
     item.on('updated', (e, state) => {
       if (state === 'progressing' && !item.isPaused() && item.getTotalBytes() > 0) {
         mainWindow.setProgressBar(item.getReceivedBytes() / item.getTotalBytes());
@@ -723,8 +748,6 @@ function createWindow() {
     if (url.includes('patrins.com/dashboard')) {
       mountDavDrive();
       if (store.get('syncEnabled', false) && store.get('syncFolder') && !sync.watcher) sync.start();
-      // Cache the rendered dashboard HTML for zero-latency next launch
-      saveUICache(mainWindow.webContents);
     }
   });
 
@@ -853,7 +876,27 @@ app.whenReady().then(async () => {
   }
 
   createWindow();
-  tray = createTray(mainWindow, { showDropWindow });
+  const startLan = async () => {
+    // Reuse the existing lan:start logic
+    let username = os.userInfo().username || 'Desktop';
+    try {
+      const cookies = await mainWindow.webContents.session.cookies.get({ url: 'https://patrins.com' });
+      const tok = cookies.find(c => c.name === 'token');
+      if (tok) {
+        const info = await new Promise((res, rej) => {
+          const req = net.request({ method: 'GET', url: 'https://patrins.com/api/auth/me',
+            session: mainWindow.webContents.session, useSessionCookies: true });
+          let body = ''; req.on('response', r => { r.on('data', c => body += c); r.on('end', () => { try { res(JSON.parse(body)); } catch { rej(new Error('bad json')); } }); });
+          req.on('error', rej); req.end();
+        });
+        if (info?.display_name) username = info.display_name;
+        else if (info?.username) username = info.username;
+      }
+    } catch (_) {}
+    return lan.start(username, app.getPath('downloads'));
+  };
+
+  tray = createTray(mainWindow, { showDropWindow, showLanWindow: () => showLanWindow(startLan) });
   setupAutoUpdater();
 
   // Re-mount WebDAV drive after PC wakes from sleep
@@ -867,6 +910,9 @@ app.whenReady().then(async () => {
 
   // Drop window IPC (uses sync engine's token getter)
   initDropIPC(() => sync._getToken());
+
+  // LAN window IPC
+  initLanWindowIPC(lan, () => mainWindow?.webContents?.session, startLan);
 
   // Context menu shell extension (Windows only, runs silently in background)
   registerContextMenu().catch(() => {});

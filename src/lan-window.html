@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>Patrins Local Transfer</title>
+<link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600&family=Geist+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+:root {
+  --bg: #111110; --surface: #1a1a18; --surface2: #222220; --surface3: #2a2a28;
+  --border: #2a2a27; --border2: #333330;
+  --text: #e8e6e1; --text2: #8a8880; --text3: #5a5856;
+  --error: #ff6b6b; --success: #28c840; --accent: #6366f1;
+  --accent-soft: rgba(99,102,241,0.12);
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+body {
+  font-family: 'Geist', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  background: var(--bg);
+  color: var(--text);
+  height: 100vh;
+  overflow: hidden;
+  user-select: none;
+  border: 1px solid var(--border2);
+  border-radius: 14px;
+  -webkit-app-region: drag;
+  box-shadow: 0 20px 60px rgba(0,0,0,.55);
+}
+
+.app { display: flex; flex-direction: column; height: 100vh; }
+
+/* ── Titlebar ── */
+.titlebar {
+  display: flex; align-items: center; gap: 10px;
+  padding: 12px 14px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+}
+.tb-logo {
+  width: 22px; height: 22px; border-radius: 6px;
+  background: linear-gradient(150deg, #7c85ff, #4f5bff 60%, #3f48c9);
+  display: flex; align-items: center; justify-content: center; flex-shrink: 0;
+}
+.tb-title { font-size: 13px; font-weight: 600; letter-spacing: -.01em; flex: 1; }
+
+.tb-status {
+  -webkit-app-region: no-drag;
+  display: flex; align-items: center; gap: 6px;
+  font-size: 11px; font-weight: 500; color: var(--text2);
+  padding: 4px 10px; border-radius: 20px;
+  background: var(--surface); border: 1px solid var(--border);
+}
+.tb-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--text3); transition: background .3s; }
+.tb-status.on   .tb-dot { background: var(--success); box-shadow: 0 0 6px rgba(40,200,64,.6); }
+.tb-status.wait .tb-dot { background: var(--accent); animation: blink 1.3s ease-in-out infinite; }
+.tb-status.err  .tb-dot { background: var(--error); }
+@keyframes blink { 0%,100% { opacity: .35; } 50% { opacity: 1; } }
+
+.tb-close {
+  -webkit-app-region: no-drag;
+  width: 26px; height: 26px; border-radius: 6px;
+  background: transparent; border: none; color: var(--text3);
+  cursor: pointer; display: flex; align-items: center; justify-content: center;
+  transition: background .15s, color .15s;
+}
+.tb-close:hover { background: var(--surface2); color: var(--text); }
+
+/* ── Body: two-column landscape ── */
+.body { -webkit-app-region: no-drag; flex: 1; display: flex; min-height: 0; }
+
+.col-left {
+  width: 320px; flex-shrink: 0;
+  padding: 20px 22px;
+  border-right: 1px solid var(--border);
+  display: flex; flex-direction: column;
+}
+.col-right {
+  flex: 1; padding: 20px 22px;
+  display: flex; flex-direction: column; min-width: 0;
+}
+
+.col-head { font-size: 11px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text3); margin-bottom: 4px; }
+.col-sub  { font-size: 12.5px; color: var(--text2); line-height: 1.5; margin-bottom: 18px; }
+
+/* ── Code display ── */
+.code-cells { display: flex; gap: 6px; margin-bottom: 16px; }
+.code-gap { width: 8px; }
+.cell {
+  flex: 1; aspect-ratio: 3 / 4; max-height: 60px;
+  display: flex; align-items: center; justify-content: center;
+  border-radius: 9px;
+  background: var(--surface); border: 1px solid var(--border);
+  font-family: 'Geist Mono', 'Consolas', monospace;
+  font-size: 24px; font-weight: 500; color: var(--text3);
+  transition: color .25s var(--ease), border-color .25s var(--ease), background .25s var(--ease), transform .25s var(--ease);
+}
+.cell.filled { color: var(--text); border-color: var(--border2); background: var(--surface2); }
+@keyframes cellIn { 0% { opacity: 0; transform: translateY(6px) scale(.96); } 100% { opacity: 1; transform: translateY(0) scale(1); } }
+.cell.in { animation: cellIn .3s var(--ease) both; }
+
+/* skeleton shimmer while loading */
+.cell.load {
+  background: linear-gradient(100deg, var(--surface) 30%, var(--surface2) 50%, var(--surface) 70%);
+  background-size: 200% 100%;
+  animation: shimmer 1.2s linear infinite;
+  color: transparent;
+}
+@keyframes shimmer { 0% { background-position: 200% 0; } 100% { background-position: -200% 0; } }
+
+/* ── Expiry ── */
+.expiry { margin-bottom: 22px; }
+.expiry-track { height: 3px; border-radius: 2px; background: var(--surface3); overflow: hidden; }
+.expiry-fill { height: 100%; width: 100%; border-radius: 2px; background: var(--accent); transition: width 1s linear; }
+.expiry-row { display: flex; justify-content: space-between; margin-top: 7px; font-size: 11px; color: var(--text3); }
+.expiry-time { color: var(--text2); font-variant-numeric: tabular-nums; }
+
+/* ── Steps ── */
+.steps-title { font-size: 11px; font-weight: 600; letter-spacing: .05em; text-transform: uppercase; color: var(--text3); margin-bottom: 11px; }
+.step { display: flex; align-items: center; gap: 11px; margin-bottom: 10px; font-size: 12.5px; color: var(--text2); line-height: 1.4; }
+.step-n {
+  width: 20px; height: 20px; flex-shrink: 0; border-radius: 50%;
+  background: var(--accent-soft); color: #a5aeff;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 11px; font-weight: 600;
+}
+.step b { color: var(--text); font-weight: 500; }
+
+/* ── Refresh button ── */
+.refresh-btn {
+  -webkit-app-region: no-drag;
+  margin-top: auto;
+  display: flex; align-items: center; justify-content: center; gap: 8px;
+  padding: 10px; border-radius: 9px;
+  background: var(--surface2); border: 1px solid var(--border);
+  color: var(--text); font-size: 13px; font-weight: 500; font-family: inherit;
+  cursor: pointer; transition: background .15s, border-color .15s;
+}
+.refresh-btn:hover { background: var(--surface3); border-color: var(--border2); }
+.refresh-btn svg { transition: transform .5s var(--ease); }
+.refresh-btn:hover svg { transform: rotate(-180deg); }
+
+/* ── Right column ── */
+.activity { flex: 1; display: flex; flex-direction: column; min-height: 0; }
+.activity-scroll { flex: 1; overflow-y: auto; overflow-x: hidden; margin: 0 -6px; padding: 0 6px; }
+.activity-scroll::-webkit-scrollbar { width: 4px; }
+.activity-scroll::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+
+.empty {
+  height: 100%; min-height: 220px;
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: 12px; text-align: center; padding: 20px;
+}
+.empty-ic {
+  width: 52px; height: 52px; border-radius: 14px;
+  background: var(--surface); border: 1px solid var(--border);
+  display: flex; align-items: center; justify-content: center; color: var(--text3);
+}
+.empty-t { font-size: 13.5px; font-weight: 500; color: var(--text2); }
+.empty-s { font-size: 12px; color: var(--text3); line-height: 1.5; max-width: 240px; }
+
+/* group label inside activity */
+.grp-label { font-size: 10.5px; font-weight: 600; letter-spacing: .06em; text-transform: uppercase; color: var(--text3); margin: 4px 2px 8px; }
+
+/* device card */
+.device {
+  display: flex; align-items: center; gap: 12px;
+  padding: 11px 12px; border-radius: 11px;
+  background: var(--surface); border: 1px solid var(--border);
+  margin-bottom: 8px; animation: rowIn .28s var(--ease) both;
+}
+.device-ic {
+  width: 36px; height: 36px; border-radius: 9px; flex-shrink: 0;
+  background: var(--accent-soft);
+  display: flex; align-items: center; justify-content: center; color: #a5aeff;
+}
+.device-meta { flex: 1; min-width: 0; }
+.device-name { font-size: 13px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.device-sub { font-size: 11px; color: var(--text3); margin-top: 1px; }
+.device-send {
+  -webkit-app-region: no-drag; flex-shrink: 0;
+  padding: 7px 14px; border-radius: 8px;
+  background: var(--accent); border: none; color: #fff;
+  font-size: 12.5px; font-weight: 500; font-family: inherit; cursor: pointer;
+  transition: filter .15s;
+}
+.device-send:hover { filter: brightness(1.12); }
+.device-send:disabled { opacity: .5; cursor: default; }
+
+/* transfer row */
+.xfer {
+  padding: 11px 12px; border-radius: 11px;
+  background: var(--surface); border: 1px solid var(--border);
+  margin-bottom: 8px; animation: rowIn .28s var(--ease) both;
+}
+@keyframes rowIn { 0% { opacity: 0; transform: translateY(6px); } 100% { opacity: 1; transform: translateY(0); } }
+.xfer-head { display: flex; align-items: center; gap: 9px; margin-bottom: 9px; }
+.xfer-dir {
+  width: 26px; height: 26px; border-radius: 7px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+}
+.xfer-dir.in  { background: rgba(40,200,64,.12); color: var(--success); }
+.xfer-dir.out { background: var(--accent-soft); color: #a5aeff; }
+.xfer-name { flex: 1; font-size: 12.5px; font-weight: 500; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.xfer-pct { flex-shrink: 0; font-size: 11.5px; font-weight: 500; color: var(--text2); font-variant-numeric: tabular-nums; }
+.xfer-pct.done { color: var(--success); }
+.xfer-pct.err  { color: var(--error); }
+.xfer-track { height: 4px; border-radius: 2px; background: var(--surface3); overflow: hidden; }
+.xfer-bar { height: 100%; width: 0%; border-radius: 2px; background: var(--accent); transition: width .3s var(--ease); }
+.xfer-bar.done { background: var(--success); }
+.xfer-bar.err  { background: var(--error); }
+</style>
+</head>
+<body>
+<div class="app">
+
+  <div class="titlebar">
+    <div class="tb-logo">
+      <svg width="13" height="13" viewBox="0 0 128 128" fill="none">
+        <rect x="4" y="50" width="70" height="46" rx="9" fill="rgba(255,255,255,0.4)"/>
+        <rect x="12" y="34" width="70" height="46" rx="9" fill="rgba(255,255,255,0.68)"/>
+        <rect x="20" y="18" width="70" height="46" rx="9" fill="#fff"/>
+      </svg>
+    </div>
+    <span class="tb-title">Local Transfer</span>
+    <div class="tb-status wait" id="tbStatus">
+      <span class="tb-dot"></span>
+      <span id="tbStatusTxt">Starting…</span>
+    </div>
+    <button class="tb-close" id="closeBtn" title="Close">
+      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M2 2l8 8M10 2l-8 8"/></svg>
+    </button>
+  </div>
+
+  <div class="body">
+
+    <!-- LEFT: connect via code -->
+    <div class="col-left">
+      <div class="col-head">Connect a device</div>
+      <div class="col-sub">Enter this code in the Patrins app on your phone. Files transfer directly over your local network — never through the cloud.</div>
+
+      <div class="code-cells" id="codeCells">
+        <div class="cell load" id="c0"></div>
+        <div class="cell load" id="c1"></div>
+        <div class="cell load" id="c2"></div>
+        <div class="code-gap"></div>
+        <div class="cell load" id="c3"></div>
+        <div class="cell load" id="c4"></div>
+        <div class="cell load" id="c5"></div>
+      </div>
+
+      <div class="expiry">
+        <div class="expiry-track"><div class="expiry-fill" id="expiryFill"></div></div>
+        <div class="expiry-row">
+          <span id="expiryLabel">Preparing…</span>
+          <span class="expiry-time" id="expiryTime"></span>
+        </div>
+      </div>
+
+      <div class="steps-title">How to connect</div>
+      <div class="step"><span class="step-n">1</span><span>Open <b>Patrins</b> on your phone</span></div>
+      <div class="step"><span class="step-n">2</span><span>Tap <b>+</b> → <b>Local Transfer</b></span></div>
+      <div class="step"><span class="step-n">3</span><span>Enter the code above</span></div>
+
+      <button class="refresh-btn" id="refreshBtn">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+        New code
+      </button>
+    </div>
+
+    <!-- RIGHT: activity -->
+    <div class="col-right">
+      <div class="col-head" style="margin-bottom:14px">Activity</div>
+      <div class="activity">
+        <div class="activity-scroll" id="activityScroll">
+          <div class="empty" id="emptyState">
+            <div class="empty-ic">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="m7 12 5 5 5-5"/><path d="M5 21h14"/></svg>
+            </div>
+            <div class="empty-t">Waiting for a device</div>
+            <div class="empty-s">Once your phone enters the code, transfers will appear here.</div>
+          </div>
+
+          <div id="deviceGroup" style="display:none">
+            <div class="grp-label">Connected</div>
+            <div id="deviceList"></div>
+          </div>
+
+          <div id="xferGroup" style="display:none">
+            <div class="grp-label">Transfers</div>
+            <div id="xferList"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</div>
+
+<script>
+const closeBtn    = document.getElementById('closeBtn');
+const tbStatus    = document.getElementById('tbStatus');
+const tbStatusTxt = document.getElementById('tbStatusTxt');
+const cells       = [0,1,2,3,4,5].map(i => document.getElementById('c' + i));
+const expiryFill  = document.getElementById('expiryFill');
+const expiryLabel = document.getElementById('expiryLabel');
+const expiryTime  = document.getElementById('expiryTime');
+const refreshBtn  = document.getElementById('refreshBtn');
+const activityScroll = document.getElementById('activityScroll');
+const emptyState  = document.getElementById('emptyState');
+const deviceGroup = document.getElementById('deviceGroup');
+const deviceList  = document.getElementById('deviceList');
+const xferGroup   = document.getElementById('xferGroup');
+const xferList    = document.getElementById('xferList');
+
+closeBtn.addEventListener('click', () => window.lanWin.close());
+
+function setStatus(cls, txt) { tbStatus.className = 'tb-status ' + cls; tbStatusTxt.textContent = txt; }
+
+// ── Pairing code ────────────────────────────────────────────────────────────
+let _refreshTimer = null;
+let _expiryInt    = null;
+let _attempts     = 0;
+
+function showLoading() {
+  cells.forEach(c => { c.className = 'cell load'; c.textContent = ''; });
+  expiryLabel.textContent = 'Preparing…';
+  expiryTime.textContent  = '';
+  expiryFill.style.transition = 'none';
+  expiryFill.style.width = '100%';
+}
+
+function showCode(code) {
+  cells.forEach((c, i) => {
+    setTimeout(() => {
+      c.className = 'cell filled in';
+      c.textContent = code[i] || '';
+    }, i * 55);
+  });
+}
+
+function showCodeError(msg) {
+  cells.forEach(c => { c.className = 'cell'; c.textContent = ''; });
+  expiryFill.style.width = '0%';
+  expiryLabel.textContent = msg;
+  expiryLabel.style.color = 'var(--error)';
+  expiryTime.textContent = '';
+}
+
+function startExpiry(secs) {
+  clearInterval(_expiryInt);
+  expiryLabel.style.color = '';
+  expiryLabel.textContent = 'Code expires in';
+  expiryFill.style.transition = 'none';
+  expiryFill.style.width = '100%';
+  const end = Date.now() + secs * 1000;
+  requestAnimationFrame(() => {
+    expiryFill.style.transition = 'width ' + secs + 's linear';
+    expiryFill.style.width = '0%';
+  });
+  const tick = () => {
+    const rem = Math.max(0, Math.ceil((end - Date.now()) / 1000));
+    expiryTime.textContent = rem + 's';
+    if (rem <= 0) clearInterval(_expiryInt);
+  };
+  tick();
+  _expiryInt = setInterval(tick, 500);
+}
+
+async function fetchCode() {
+  clearTimeout(_refreshTimer);
+  showLoading();
+  setStatus('wait', 'Starting…');
+
+  const res = await window.lanWin.announce();
+
+  if (!res || !res.ok) {
+    const transient = res && (res.error === 'LAN not running' || res.error === 'No session');
+    if (transient && _attempts < 12) {
+      _attempts++;
+      setTimeout(fetchCode, 800);
+      return;
+    }
+    setStatus('err', 'Error');
+    if (res && res.error === 'Not logged in') showCodeError('Sign in to Patrins first');
+    else showCodeError((res && res.error) || 'Could not start');
+    return;
+  }
+
+  _attempts = 0;
+  setStatus('on', 'Ready');
+  const code = res.code.replace(/\s+/g, '').toUpperCase();
+  const ttl  = res.expiresIn || 90;
+  showCode(code);
+  startExpiry(ttl);
+  _refreshTimer = setTimeout(fetchCode, (ttl - 5) * 1000);
+}
+
+refreshBtn.addEventListener('click', () => { _attempts = 0; fetchCode(); });
+fetchCode();
+
+// ── Devices (LAN-discovered peers, e.g. another desktop) ─────────────────────
+let peers = [];
+
+function syncEmpty() {
+  const hasContent = peers.length > 0 || xferList.children.length > 0;
+  emptyState.style.display = hasContent ? 'none' : 'flex';
+}
+
+function renderPeers() {
+  deviceList.innerHTML = '';
+  deviceGroup.style.display = peers.length ? 'block' : 'none';
+  for (const p of peers) {
+    const mobile = p.platform === 'android' || p.platform === 'ios';
+    const el = document.createElement('div');
+    el.className = 'device';
+    el.innerHTML =
+      '<div class="device-ic">' + deviceIcon(mobile) + '</div>' +
+      '<div class="device-meta"><div class="device-name">' + esc(p.name || p.username || 'Device') + '</div>' +
+      '<div class="device-sub">' + esc(p.ip || '') + '</div></div>' +
+      '<button class="device-send">Send file</button>';
+    el.querySelector('.device-send').addEventListener('click', async e => {
+      const btn = e.currentTarget;
+      btn.disabled = true; btn.textContent = 'Choose…';
+      const fp = await window.lanWin.pickFile();
+      if (!fp) { btn.disabled = false; btn.textContent = 'Send file'; return; }
+      btn.textContent = 'Sending…';
+      const key = p.id + fp;
+      addXfer(key, 'out', fp.split(/[\\/]/).pop(), 0);
+      const r = await window.lanWin.sendFile(p.id, fp);
+      finalizeXfer(key, r && r.ok);
+      btn.disabled = false; btn.textContent = 'Send file';
+    });
+    deviceList.appendChild(el);
+  }
+  syncEmpty();
+}
+
+function deviceIcon(mobile) {
+  return mobile
+    ? '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="7" y="2" width="10" height="20" rx="2"/><line x1="11" y1="18" x2="13" y2="18"/></svg>'
+    : '<svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="13" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>';
+}
+
+window.lanWin.getPeers().then(list => { peers = list || []; renderPeers(); });
+window.lanWin.onPeers(list => { peers = list || []; renderPeers(); });
+
+// ── Transfers (in + out) ─────────────────────────────────────────────────────
+const xfers = new Map();
+
+function ensureXferGroup() { xferGroup.style.display = 'block'; }
+
+function addXfer(key, dir, name, pct) {
+  if (xfers.has(key)) return;
+  ensureXferGroup();
+  const el = document.createElement('div');
+  el.className = 'xfer';
+  const arrow = dir === 'in'
+    ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="m19 12-7 7-7-7"/></svg>'
+    : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="m5 12 7-7 7 7"/></svg>';
+  el.innerHTML =
+    '<div class="xfer-head"><div class="xfer-dir ' + dir + '">' + arrow + '</div>' +
+    '<div class="xfer-name" title="' + esc(name) + '">' + esc(name) + '</div>' +
+    '<div class="xfer-pct">' + (pct || 0) + '%</div></div>' +
+    '<div class="xfer-track"><div class="xfer-bar" style="width:' + (pct || 0) + '%"></div></div>';
+  xferList.prepend(el);
+  xfers.set(key, { bar: el.querySelector('.xfer-bar'), pct: el.querySelector('.xfer-pct') });
+  syncEmpty();
+}
+
+function updateXfer(key, pct) {
+  const t = xfers.get(key);
+  if (!t) return;
+  t.bar.style.width = pct + '%';
+  t.pct.textContent = pct + '%';
+}
+
+function finalizeXfer(key, ok) {
+  const t = xfers.get(key);
+  if (!t) return;
+  t.bar.style.width = '100%';
+  t.bar.className = 'xfer-bar ' + (ok ? 'done' : 'err');
+  t.pct.textContent = ok ? 'Done' : 'Failed';
+  t.pct.className = 'xfer-pct ' + (ok ? 'done' : 'err');
+}
+
+// Outgoing (desktop → peer)
+window.lanWin.onSendProgress(({ peerId, filePath, pct }) => {
+  const key = peerId + filePath;
+  if (!xfers.has(key)) addXfer(key, 'out', filePath.split(/[\\/]/).pop(), pct);
+  else updateXfer(key, pct);
+});
+window.lanWin.onSendDone(({ peerId, filePath, ok }) => finalizeXfer(peerId + filePath, ok));
+
+// Incoming (phone → desktop) — keyed by fileName (file-received carries no requestId)
+window.lanWin.onIncoming(({ fileName }) => {
+  addXfer('in:' + fileName, 'in', fileName, 0);
+});
+window.lanWin.onReceiveProgress(({ fileName, pct }) => {
+  const key = 'in:' + fileName;
+  if (!xfers.has(key)) addXfer(key, 'in', fileName, pct);
+  else updateXfer(key, pct);
+});
+window.lanWin.onFileReceived(({ fileName }) => {
+  const key = 'in:' + fileName;
+  if (!xfers.has(key)) addXfer(key, 'in', fileName, 100);
+  finalizeXfer(key, true);
+});
+
+function esc(s) {
+  return String(s == null ? '' : s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+</script>
+</body>
+</html>

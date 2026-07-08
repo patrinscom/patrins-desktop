@@ -270,6 +270,10 @@ class LanEngine extends EventEmitter {
     return new Promise((resolve, reject) => {
       this._httpServer = http.createServer((req, res) => {
         res.setHeader('Access-Control-Allow-Origin', '*');
+        res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+        res.setHeader('Access-Control-Allow-Headers', 'Content-Type, X-LAN-Token, X-File-Name, X-File-Size, X-Sender-Name, X-Request-Id');
+        // Browser sends OPTIONS preflight for cross-origin requests with custom headers
+        if (req.method === 'OPTIONS') { res.writeHead(204); res.end(); return; }
         if (req.method === 'GET'  && req.url === '/info')    this._handleInfo(req, res);
         else if (req.method === 'POST' && req.url === '/request') this._handleRequest(req, res);
         else if (req.method === 'POST' && req.url === '/receive') this._handleReceive(req, res);
