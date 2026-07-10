@@ -427,13 +427,27 @@ async function mountDavDrive() {
         ].join(' && ')).catch(() => {});
         return;
       } catch (err) {
-        davLog(`${letter}: failed — ${err.message.split('\n')[0]}`);
-        logger.log('dav_letter_fail', { letter, error: err.message.split('\n')[0] });
+        const msg = err.message.split('\n')[0];
+        davLog(`${letter}: failed — ${msg}`);
+        logger.log('dav_letter_fail', { letter, error: msg });
+        // System error 86 = wrong password (bad token), System error 5 = access denied
+        // These are auth errors — retrying other letters won't help, fail fast
+        if (/error 86|error 5\b|password.*not correct|access.*denied/i.test(msg)) {
+          davLog('Auth error — stopping mount attempts');
+          notify('Patrins Drive', 'Authentication failed. Reload the app and try again.');
+          return;
+        }
+        // System error 67 = network path not found — server unreachable, no point retrying letters
+        if (/error 67|network path/i.test(msg)) {
+          davLog('Network path not found — server unreachable');
+          notify('Patrins Drive', 'Cannot reach patrins.com. Check your connection.');
+          return;
+        }
       }
     }
     davLog('All letters failed');
     logger.log('dav_all_failed', {});
-    notify('Patrins Drive', 'Could not mount — check %APPDATA%\\Patrins\\dav-mount.log');
+    notify('Patrins Drive', 'No available drive letters (P–T all in use). Free a drive letter and use "Mount Drive…" from the tray.');
   } finally {
     davMounting = false;
   }
@@ -903,9 +917,13 @@ app.whenReady().then(async () => {
   });
   setupAutoUpdater();
 
-  // Re-mount WebDAV drive after PC wakes from sleep
+  // Re-mount WebDAV drive after PC wakes from sleep.
+  // Windows silently disconnects network drives on sleep, so always force a fresh mount
+  // regardless of what davDriveLetter says — it reflects what we asked for, not what Windows kept.
   powerMonitor.on('resume', () => {
-    if (!davDriveLetter) mountDavDrive();
+    davDriveLetter = null;
+    updateTrayMenu(undefined, null);
+    mountDavDrive();
   });
 
   // Tray pause/resume clicks relay to sync
@@ -921,17 +939,20 @@ app.whenReady().then(async () => {
   // Context menu shell extension (Windows only, runs silently in background)
   registerContextMenu().catch(() => {});
 
-  // Restore watch folders from last session
-  for (const fp of getWatchFolders()) {
-    if (fs.existsSync(fp)) {
-      const id = require('crypto').createHash('md5').update(fp).digest('hex').slice(0, 8);
-      const engine = new SyncEngine(store, () => mainWindow?.webContents?.session, fp, id);
-      watchSyncs.set(fp, engine);
-      engine.on('status', (data) => {
-        mainWindow?.webContents?.send('sync:watch-status', { folder: fp, ...data });
-      });
-      // Don't auto-start yet — will start after dashboard login (did-navigate)
-    }
+  // Restore watch folders from last session; prune any that no longer exist on disk
+  const storedFolders = getWatchFolders();
+  const validFolders  = storedFolders.filter(fp => fs.existsSync(fp));
+  if (validFolders.length !== storedFolders.length) {
+    store.set('watchFolders', validFolders); // clean up stale entries
+  }
+  for (const fp of validFolders) {
+    const id = require('crypto').createHash('md5').update(fp).digest('hex').slice(0, 8);
+    const engine = new SyncEngine(store, () => mainWindow?.webContents?.session, fp, id);
+    watchSyncs.set(fp, engine);
+    engine.on('status', (data) => {
+      mainWindow?.webContents?.send('sync:watch-status', { folder: fp, ...data });
+    });
+    // Don't auto-start yet — will start after dashboard login (did-navigate)
   }
 
   // Handle deep link if app was launched via patrins:// URL

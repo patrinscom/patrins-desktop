@@ -59,6 +59,7 @@ class SyncEngine extends EventEmitter {
     this.rootId          = null;
     this.lastSync        = null;
     this._currentState   = 'stopped';
+    this._retryTimer     = null;
   }
 
   get localFolder() {
@@ -210,6 +211,7 @@ class SyncEngine extends EventEmitter {
   }
 
   stop() {
+    if (this._retryTimer) { clearTimeout(this._retryTimer); this._retryTimer = null; }
     if (this.watcher) { this.watcher.close(); this.watcher = null; }
     this.queue.clear();
     this.processing = false;
@@ -262,10 +264,33 @@ class SyncEngine extends EventEmitter {
         if (op.type === 'upload') await this._uploadFile(rel, op.absPath);
         else if (op.type === 'delete') await this._deleteFile(rel);
       } catch (e) {
-        console.error('[Sync] Failed:', rel, e.message);
-        errors.push({ rel, error: e.message });
+        const raw = e.message || '';
+        const isLocked = /EPERM|EBUSY|EACCES|operation not permitted|sharing violation/i.test(raw);
+        const isQuota  = /quota|storage.*full|507|insufficient storage/i.test(raw);
+        const isAuth   = /\b401\b|\b403\b|not logged in|auth failed/i.test(raw);
+        const isTooLarge = /\b413\b|too large|payload/i.test(raw);
+
+        let displayMsg;
+        if (isLocked) {
+          displayMsg = path.basename(rel) + ' is in use — retrying in 10s';
+          // Re-queue after delay so the file is picked up once the lock releases
+          const capturedRel = rel;
+          const capturedOp  = { ...op };
+          setTimeout(() => { if (this.watcher) { this.queue.set(capturedRel, capturedOp); this._processQueue(); } }, 10_000);
+        } else if (isQuota) {
+          displayMsg = 'Storage full — upgrade your Patrins plan to continue syncing';
+        } else if (isAuth) {
+          displayMsg = 'Session expired — please reload the app';
+        } else if (isTooLarge) {
+          displayMsg = path.basename(rel) + ' exceeds the server file size limit';
+        } else {
+          displayMsg = path.basename(rel) + ': ' + raw.split('\n')[0].slice(0, 120);
+        }
+
+        console.error('[Sync] Failed:', rel, raw);
+        errors.push({ rel, error: displayMsg, isLocked });
         logger.log('sync_upload_error', {
-          error: e.message,
+          error: raw,
           ext:   (path.extname(rel) || '').toLowerCase().slice(1, 10) || 'none',
           op:    op.type,
         });
@@ -277,11 +302,22 @@ class SyncEngine extends EventEmitter {
 
     if (!this.paused) {
       this.lastSync = Date.now();
-      if (errors.length > 0) {
-        const msg = errors.length === 1
-          ? 'Failed: ' + path.basename(errors[0].rel) + ' — ' + errors[0].error
-          : errors.length + ' files failed — ' + errors[0].error;
+      const hardErrors = errors.filter(e => !e.isLocked);
+      if (hardErrors.length > 0) {
+        const msg = hardErrors.length === 1
+          ? hardErrors[0].error
+          : hardErrors.length + ' files failed — ' + hardErrors[0].error;
         this._status('error', { error: msg });
+        // Auto-retry in 30s for transient errors (network hiccups etc.)
+        // Don't retry for permanent errors like quota or auth — those need user action
+        const isPermanent = /quota|Storage full|upgrade|Session expired|size limit/i.test(msg);
+        if (this.watcher && !isPermanent) {
+          if (this._retryTimer) clearTimeout(this._retryTimer);
+          this._retryTimer = setTimeout(() => {
+            if (this._currentState === 'error' && this.watcher && !this.paused)
+              this._initialSync().catch(() => {});
+          }, 30_000);
+        }
       } else {
         this._status('up-to-date');
       }
@@ -293,8 +329,9 @@ class SyncEngine extends EventEmitter {
   async _initialSync() {
     const files = this._scanDir(this.localFolder);
     for (const absPath of files) {
-      const rel   = path.relative(this.localFolder, absPath).replace(/\\/g, '/');
-      const stat  = fs.statSync(absPath);
+      const rel = path.relative(this.localFolder, absPath).replace(/\\/g, '/');
+      let stat;
+      try { stat = fs.statSync(absPath); } catch { continue; } // file gone between scan and check
       const known = this.fileState[rel];
       if (!known || known.size !== stat.size || known.mtime !== stat.mtimeMs)
         this.queue.set(rel, { type: 'upload', absPath });
@@ -371,8 +408,13 @@ class SyncEngine extends EventEmitter {
   // ── File operations ────────────────────────────────────────────────────────
 
   async _uploadFile(rel, absPath) {
-    if (!fs.existsSync(absPath)) return;
-    const stat = fs.statSync(absPath);
+    let stat;
+    try {
+      stat = fs.statSync(absPath);
+    } catch (e) {
+      if (e.code === 'ENOENT') return; // file gone between scan and upload
+      throw e;                          // EPERM / EACCES on stat → propagate so _processQueue can retry
+    }
 
     if (stat.size > MAX_SYNC_SIZE) {
       throw new Error(`File too large to sync (${(stat.size / 1e9).toFixed(1)} GB). Max 50 GB.`);
