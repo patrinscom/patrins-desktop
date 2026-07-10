@@ -36,7 +36,8 @@ jobs:
       - name: Build Mac app
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: false
-        run: npm run build:mac
+          PUBLISH_FOR_PULL_REQUEST: false
+        run: npx electron-builder --mac --universal --publish never
 
       - name: Deploy to server
         env:
@@ -47,7 +48,7 @@ jobs:
           chmod 600 ~/.ssh/deploy_key
           SCP="scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no"
           DEST="root@159.69.64.77:/var/www/patrins/public/updates/"
-          $SCP dist/Patrins-*.dmg           $DEST
-          $SCP dist/Patrins-*.dmg.blockmap  $DEST
-          $SCP dist/latest-mac.yml          $DEST
+          $SCP dist/Patrins-*-universal.dmg          $DEST
+          $SCP dist/Patrins-*-universal.dmg.blockmap $DEST
+          $SCP dist/latest-mac.yml                   $DEST
           echo "Deployed successfully"
