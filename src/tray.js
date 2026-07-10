@@ -37,6 +37,11 @@ function buildMenu() {
       label: `Open Drive (${_driveLetter}:)`,
       click: () => shell.openPath(`${_driveLetter}:\\`),
     });
+  } else {
+    items.push({
+      label: 'Mount Drive…',
+      click: () => { if (_callbacks.mountDrive) _callbacks.mountDrive(); },
+    });
   }
 
   if (_syncState && _syncState !== 'stopped') {

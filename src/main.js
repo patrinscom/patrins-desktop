@@ -382,29 +382,29 @@ async function mountDavDrive() {
 
   davLog('mountDavDrive() called');
 
-  let info;
   try {
-    info = await fetchDavToken();
-    davLog(`Got DAV token for ${info?.email}`);
-  } catch (err) {
-    davLog(`fetchDavToken failed: ${err.message}`);
-    logger.log('dav_token_error', { error: err.message });
-    return;
-  }
-  if (!info?.token || !info?.email) { davLog('No token/email in response'); return; }
-  // Validate token and email before embedding in shell command
-  if (!/^[a-f0-9]{48}$/.test(info.token)) { davLog('Invalid token format, aborting mount'); return; }
-  if (!/^[^"&|;`$<>\r\n]{1,254}$/.test(info.email)) { davLog('Invalid email format, aborting mount'); return; }
+    let info;
+    try {
+      info = await fetchDavToken();
+      davLog(`Got DAV token for ${info?.email}`);
+    } catch (err) {
+      davLog(`fetchDavToken failed: ${err.message}`);
+      logger.log('dav_token_error', { error: err.message });
+      return;
+    }
+    if (!info?.token || !info?.email) { davLog('No token/email in response'); return; }
+    // Validate token and email before embedding in shell command
+    if (!/^[a-f0-9]{48}$/.test(info.token)) { davLog('Invalid token format, aborting mount'); return; }
+    if (!/^[^"&|;`$<>\r\n]{1,254}$/.test(info.email)) { davLog('Invalid email format, aborting mount'); return; }
 
-  const running = await ensureWebClient();
-  if (!running) {
-    davLog('WebClient not running, aborting mount');
-    logger.log('dav_service_error', {});
-    notify('Patrins Drive', 'Could not start WebDAV service. Drive not mounted.');
-    return;
-  }
+    const running = await ensureWebClient();
+    if (!running) {
+      davLog('WebClient not running, aborting mount');
+      logger.log('dav_service_error', {});
+      notify('Patrins Drive', 'Could not start WebDAV service. Drive not mounted.');
+      return;
+    }
 
-  try {
     for (const letter of ['P', 'Q', 'R', 'S', 'T']) {
       await runCmd(`net use ${letter}: /delete /y`).catch(() => {});
       try {
@@ -896,7 +896,11 @@ app.whenReady().then(async () => {
     return lan.start(username, app.getPath('downloads'));
   };
 
-  tray = createTray(mainWindow, { showDropWindow, showLanWindow: () => showLanWindow(startLan) });
+  tray = createTray(mainWindow, {
+    showDropWindow,
+    showLanWindow: () => showLanWindow(startLan),
+    mountDrive: () => { davMounting = false; mountDavDrive(); },
+  });
   setupAutoUpdater();
 
   // Re-mount WebDAV drive after PC wakes from sleep
