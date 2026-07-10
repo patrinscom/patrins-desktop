@@ -14,7 +14,8 @@
   "scripts": {
     "start": "electron .",
     "icons": "node scripts/generate-icons.js",
-    "build:win": "electron-builder --win --x64"
+    "build:win": "electron-builder --win --x64",
+    "build:mac": "electron-builder --mac --universal"
   },
   "dependencies": {
     "chokidar": "^5.0.0",

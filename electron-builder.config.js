@@ -10,8 +10,22 @@ module.exports = {
   files: [
     'src/**/*',
     'build/icon.ico',
+    'build/icon.icns',
     'package.json'
   ],
+
+  mac: {
+    target: [{ target: 'dmg', arch: ['universal'] }],
+    icon: 'build/icon.icns',
+    category: 'public.app-category.productivity',
+    identity: null,
+  },
+
+  dmg: {
+    title: 'Patrins ${version}',
+    background: null,
+    window: { width: 540, height: 380 },
+  },
 
   win: {
     target: [{ target: 'nsis', arch: ['x64'] }],

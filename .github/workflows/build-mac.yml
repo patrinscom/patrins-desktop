@@ -1,0 +1,53 @@
+name: Build Mac
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Generate macOS icon (.icns)
+        run: |
+          mkdir -p icon.iconset
+          sips -z 16   16   assets/icon.png --out icon.iconset/icon_16x16.png
+          sips -z 32   32   assets/icon.png --out icon.iconset/icon_16x16@2x.png
+          sips -z 32   32   assets/icon.png --out icon.iconset/icon_32x32.png
+          sips -z 64   64   assets/icon.png --out icon.iconset/icon_32x32@2x.png
+          sips -z 128  128  assets/icon.png --out icon.iconset/icon_128x128.png
+          sips -z 256  256  assets/icon.png --out icon.iconset/icon_128x128@2x.png
+          sips -z 256  256  assets/icon.png --out icon.iconset/icon_256x256.png
+          sips -z 512  512  assets/icon.png --out icon.iconset/icon_256x256@2x.png
+          sips -z 512  512  assets/icon.png --out icon.iconset/icon_512x512.png
+          sips -z 1024 1024 assets/icon.png --out icon.iconset/icon_512x512@2x.png
+          iconutil -c icns icon.iconset -o build/icon.icns
+
+      - name: Build Mac app
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: false
+        run: npm run build:mac
+
+      - name: Deploy to server
+        env:
+          SSH_KEY: ${{ secrets.SERVER_SSH_KEY }}
+        run: |
+          mkdir -p ~/.ssh
+          echo "$SSH_KEY" > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          SCP="scp -i ~/.ssh/deploy_key -o StrictHostKeyChecking=no"
+          DEST="root@159.69.64.77:/var/www/patrins/public/updates/"
+          $SCP dist/Patrins-*.dmg           $DEST
+          $SCP dist/Patrins-*.dmg.blockmap  $DEST
+          $SCP dist/latest-mac.yml          $DEST
+          echo "Deployed successfully"
