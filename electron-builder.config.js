@@ -21,6 +21,15 @@ module.exports = {
     identity: null,
   },
 
+  // Ad-hoc sign the .app before DMG creation so Gatekeeper shows "Open Anyway"
+  // instead of a hard "cannot be verified" block with no escape hatch.
+  afterPack: async (ctx) => {
+    if (ctx.electronPlatformName !== 'darwin') return;
+    const { execSync } = require('child_process');
+    const app = `${ctx.appOutDir}/Patrins.app`;
+    execSync(`codesign --force --deep --sign - "${app}"`, { stdio: 'inherit' });
+  },
+
   dmg: {
     title: 'Patrins ${version}',
     background: null,
