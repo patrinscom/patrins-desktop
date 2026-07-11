@@ -140,13 +140,23 @@ lan.on('receive-progress', (data) => { mainWindow?.webContents?.send('lan:receiv
 lan.on('peer-found',    (peers) => { mainWindow?.webContents?.send('lan:peers', peers); pushPeers(peers); });
 lan.on('peers-changed', (peers) => { mainWindow?.webContents?.send('lan:peers', peers); pushPeers(peers); });
 lan.on('send-progress', (data)  => pushSendProgress(data));
-lan.on('send-done',     (data)  => pushSendDone(data));
+lan.on('send-done',     (data)  => {
+  pushSendDone(data);
+  if (!data.ok) logger.log('lan_send_fail', { error: data.error });
+});
 
+let _lastSyncErrorMsg = null; // dedup — don't repeat the same sync error every few seconds
 sync.on('status', (data) => {
   mainWindow?.webContents?.send('sync:status', data);
   const labels = { 'up-to-date': 'Patrins — Synced', syncing: 'Patrins — Syncing…', paused: 'Patrins — Sync paused', error: 'Patrins — Sync error', stopped: 'Patrins' };
   if (tray) try { tray.setToolTip(labels[data.state] || 'Patrins'); } catch (_) {}
   updateTrayMenu(data.state, undefined);
+  if (data.state === 'error' && data.error && data.error !== _lastSyncErrorMsg) {
+    _lastSyncErrorMsg = data.error;
+    logger.log('sync_error', { error: data.error });
+  } else if (data.state !== 'error') {
+    _lastSyncErrorMsg = null;
+  }
 });
 
 // Single instance lock
@@ -243,7 +253,7 @@ async function uploadFileViaContextMenu(filePath) {
       headers:     { Cookie: 'token=' + token },
       metadata:    { filename: name, filetype: 'application/octet-stream', isTemp: 'false' },
       onAfterResponse: (_req, res) => { const id = res.getHeader('X-File-Id'); if (id) fileId = id; },
-      onError:   (err) => { notify('Upload Failed', name + ': ' + err.message.split('\n')[0]); resolve(); },
+      onError:   (err) => { notify('Upload Failed', name + ': ' + err.message.split('\n')[0]); logger.log('upload_error', { error: err.message, size: logger.sizeRange(size) }); resolve(); },
       onSuccess: () => {
         const link = `https://patrins.com/f/${fileId}`;
         clipboard.writeText(link);
@@ -883,6 +893,20 @@ app.whenReady().then(async () => {
   app.setAsDefaultProtocolClient('patrins');
 
   logger.init(store, app.getVersion());
+  logger.log('app_start', {
+    os:          os.release(),
+    arch:        os.arch(),
+    cpus:        os.cpus().length,
+    mem_gb:      Math.round(os.totalmem() / (1024 ** 3)),
+    electron:    process.versions.electron,
+    node:        process.versions.node,
+    locale:      app.getLocale(),
+    displays:    screen.getAllDisplays().length,
+    sync_on:     store.get('syncEnabled', false),
+    dav_setup:   store.get('davSetupVersion', 0),
+    watch_count: getWatchFolders().length,
+    hidden:      process.argv.includes('--hidden'),
+  });
 
   // Register in Windows startup — launches hidden to tray on login
   if (app.isPackaged) {
@@ -937,7 +961,9 @@ app.whenReady().then(async () => {
   initLanWindowIPC(lan, () => mainWindow?.webContents?.session, startLan);
 
   // Context menu shell extension (Windows only, runs silently in background)
-  registerContextMenu().catch(() => {});
+  registerContextMenu()
+    .then(() => logger.log('ctx_menu_reg', { ok: true }))
+    .catch((e) => logger.log('ctx_menu_reg', { ok: false, error: e?.message }));
 
   // Restore watch folders from last session; prune any that no longer exist on disk
   const storedFolders = getWatchFolders();
@@ -1013,7 +1039,7 @@ ipcMain.handle('sync:set-config', async (event, { enabled, folder }) => {
 ipcMain.on('sync:pause',  () => sync.pause());
 ipcMain.on('sync:resume', () => sync.resume());
 
-ipcMain.on('update:install', () => autoUpdater.quitAndInstall(false, true));
+ipcMain.on('update:install', () => { logger.log('update_install', {}); autoUpdater.quitAndInstall(false, true); });
 ipcMain.handle('app:version', () => app.getVersion());
 ipcMain.handle('update:check', async () => {
   try { await autoUpdater.checkForUpdates(); } catch (_) {}
